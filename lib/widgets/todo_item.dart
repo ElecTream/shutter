@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/settings_notifier.dart';
@@ -7,12 +8,14 @@ class TodoItem extends StatelessWidget {
   final Task task;
   final int index;
   final VoidCallback onTapped;
+  final VoidCallback onSetReminder;
 
   const TodoItem({
     super.key,
     required this.task,
     required this.index,
     required this.onTapped,
+    required this.onSetReminder,
   });
 
   @override
@@ -20,6 +23,7 @@ class TodoItem extends StatelessWidget {
     final theme = Theme.of(context);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
     final customTheme = settings.currentTheme;
+    final hasReminder = task.reminderDateTime != null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -36,10 +40,30 @@ class TodoItem extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      task.text,
-                      style: theme.textTheme.bodyLarge?.copyWith(fontSize: 17),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          task.text,
+                          style: theme.textTheme.bodyLarge?.copyWith(fontSize: 17),
+                        ),
+                        if (hasReminder) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            DateFormat.yMd().add_jm().format(task.reminderDateTime!),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontSize: 14,
+                              color: customTheme.secondaryColor,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
+                  ),
+                  IconButton(
+                    icon: Icon(hasReminder ? Icons.notifications_active : Icons.notifications_none_outlined),
+                    color: hasReminder ? customTheme.secondaryColor : theme.iconTheme.color?.withOpacity(0.5),
+                    onPressed: onSetReminder,
                   ),
                   ReorderableDragStartListener(
                     index: index,
@@ -55,4 +79,3 @@ class TodoItem extends StatelessWidget {
     );
   }
 }
-

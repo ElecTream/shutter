@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -26,7 +27,6 @@ class _TodoScreenState extends State<TodoScreen> {
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _isComposing = false;
-  // --- FIX: Use a list to track multiple animating tasks ---
   final List<String> _completingTaskIds = [];
 
   @override
@@ -105,7 +105,6 @@ class _TodoScreenState extends State<TodoScreen> {
     }
   }
 
-  // --- FIX: Method now accepts the specific ID of the task that finished animating ---
   void _onAnimationEnd(String taskId) {
     if (mounted) {
       setState(() {
@@ -117,7 +116,6 @@ class _TodoScreenState extends State<TodoScreen> {
   }
 
   void _completeTodo(int index) {
-    // --- FIX: Allow multiple animations by removing the single-task guard ---
     HapticFeedback.lightImpact();
     final taskToComplete = _todos[index];
     
@@ -127,12 +125,50 @@ class _TodoScreenState extends State<TodoScreen> {
     );
     
     setState(() {
-      // --- FIX: Add the task's ID to the list of animating tasks ---
       _completingTaskIds.add(taskToComplete.id);
       _archivedTodos.insert(0, newArchivedTask);
     });
 
     _saveData();
+  }
+
+  void _updateTask(Task updatedTask) {
+    final index = _todos.indexWhere((task) => task.id == updatedTask.id);
+    if (index != -1) {
+      setState(() {
+        _todos[index] = updatedTask;
+      });
+      _saveData();
+    }
+  }
+  
+  Future<void> _showDateTimePicker(Task task) async {
+    final now = DateTime.now();
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: task.reminderDateTime ?? now,
+      firstDate: now,
+      lastDate: DateTime(2101),
+    );
+
+    if (pickedDate == null || !mounted) return;
+
+    final TimeOfDay? pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(task.reminderDateTime ?? now),
+    );
+
+    if (pickedTime == null) return;
+
+    final newReminderDateTime = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    _updateTask(task.copyWith(reminderDateTime: newReminderDateTime));
   }
   
   void _restoreTodo(ArchivedTask restoredTask) {
@@ -196,12 +232,10 @@ class _TodoScreenState extends State<TodoScreen> {
             itemBuilder: (context, index) {
               final task = _todos[index];
 
-              // --- FIX: Check if the task's ID is in the list of animating tasks ---
               if (_completingTaskIds.contains(task.id)) {
                 return AnimatingTodoItem(
                   key: ValueKey(task.id),
                   text: task.text,
-                  // --- FIX: Pass a callback that includes the specific task ID ---
                   onAnimationEnd: () => _onAnimationEnd(task.id),
                 );
               }
@@ -211,6 +245,7 @@ class _TodoScreenState extends State<TodoScreen> {
                 task: task,
                 index: index,
                 onTapped: () => _completeTodo(index),
+                onSetReminder: () => _showDateTimePicker(task),
               );
             },
             onReorder: (oldIndex, newIndex) {
@@ -265,4 +300,3 @@ class _TodoScreenState extends State<TodoScreen> {
     );
   }
 }
-
