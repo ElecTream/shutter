@@ -19,20 +19,30 @@ dependencies:
   flutter_native_splash: ^2.4.0
   reorderable_grid_view: ^2.2.6
   intl: ^0.19.0
+  flutter_local_notifications: ^19.5.0
+  timezone: ^0.10.1
+  android_alarm_manager_plus: ^5.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
-
+  flutter_launcher_icons: ^0.13.1
+  
 flutter:
   uses-material-design: true
 
+flutter_launcher_icons:  # Add this configuration section
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#121212"
+  adaptive_icon_foreground: "assets/icon/icon.png"
+
 flutter_native_splash:
   color: "#121212"
-  image: assets/icon/icon.png 
+  image: assets/icon/icon.png
 
   android_12:
     color: "#121212"
     image: assets/icon/icon.png
-

@@ -9,7 +9,9 @@ import 'dart:io';
 
 import '../models/archived_task.dart';
 import '../models/task.dart';
+import '../models/custom_theme.dart';
 import '../providers/settings_notifier.dart';
+import '../services/notification_service.dart';
 import '../widgets/animating_todo_item.dart';
 import '../widgets/todo_item.dart';
 import 'archive_screen.dart';
@@ -28,15 +30,27 @@ class _TodoScreenState extends State<TodoScreen> {
   final FocusNode _focusNode = FocusNode();
   bool _isComposing = false;
   final List<String> _completingTaskIds = [];
+  
+  final NotificationService _notificationService = NotificationService();
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _initializeNotifications();
     _textController.addListener(() {
       final isComposing = _textController.text.trim().isNotEmpty;
       if (_isComposing != isComposing) setState(() => _isComposing = isComposing);
     });
+  }
+
+  Future<void> _initializeNotifications() async {
+    try {
+      await _notificationService.init();
+      print('Notifications initialized');
+    } catch (e) {
+      print('Failed to init notifications: $e');
+    }
   }
 
   @override
@@ -55,7 +69,7 @@ class _TodoScreenState extends State<TodoScreen> {
     
     final now = DateTime.now().millisecondsSinceEpoch;
     final List<ArchivedTask> loadedArchived = archivedData
-      .map((jsonData) => ArchivedTask.fromJson(jsonDecode(jsonData)))
+      .map((jsonData) => ArchivedTask.fromJson(json.decode(jsonData)))
       .toList();
     
     bool archiveWasModified = false;
@@ -76,7 +90,7 @@ class _TodoScreenState extends State<TodoScreen> {
     setState(() {
       _todos.clear();
       _archivedTodos.clear();
-      _todos.addAll(todosData.map((json) => Task.fromJson(jsonDecode(json))));
+      _todos.addAll(todosData.map((jsonString) => Task.fromJson(json.decode(jsonString))));
       _archivedTodos.addAll(loadedArchived);
     });
 
@@ -87,9 +101,9 @@ class _TodoScreenState extends State<TodoScreen> {
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    final todosJson = _todos.map((task) => jsonEncode(task.toJson())).toList();
+    final List<String> todosJson = _todos.map((task) => json.encode(task.toJson())).toList();
     await prefs.setStringList('todos', todosJson);
-    final archivedJson = _archivedTodos.map((task) => jsonEncode(task.toJson())).toList();
+    final List<String> archivedJson = _archivedTodos.map((task) => json.encode(task.toJson())).toList();
     await prefs.setStringList('archivedTodos', archivedJson);
   }
 
@@ -119,6 +133,12 @@ class _TodoScreenState extends State<TodoScreen> {
     HapticFeedback.lightImpact();
     final taskToComplete = _todos[index];
     
+    if (taskToComplete.reminderDateTime != null) {
+      _notificationService.cancelNotification(
+        NotificationService.generateNotificationId(taskToComplete.id)
+      );
+    }
+    
     final newArchivedTask = ArchivedTask(
       text: taskToComplete.text,
       archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
@@ -141,6 +161,25 @@ class _TodoScreenState extends State<TodoScreen> {
       _saveData();
     }
   }
+
+  Future<void> _handleTaskReminder(Task task, DateTime? newReminderDateTime) async {
+    final notificationId = NotificationService.generateNotificationId(task.id);
+    
+    // Cancel existing reminder first
+    await _notificationService.cancelNotification(notificationId);
+    
+    // Schedule new reminder if time is provided
+    if (newReminderDateTime != null) {
+      await _notificationService.scheduleNotification(
+        id: notificationId,
+        title: 'Task Reminder',
+        body: task.text,
+        scheduledTime: newReminderDateTime,
+      );
+    }
+    
+    _updateTask(task.copyWith(reminderDateTime: newReminderDateTime));
+  }
   
   Future<void> _showDateTimePicker(Task task) async {
     final now = DateTime.now();
@@ -153,9 +192,23 @@ class _TodoScreenState extends State<TodoScreen> {
 
     if (pickedDate == null || !mounted) return;
 
+    // Determine the initial time and minimum time for the time picker
+    TimeOfDay initialTime;
+    
+    // If selected date is today, restrict times to future times only
+    if (pickedDate.year == now.year && 
+        pickedDate.month == now.month && 
+        pickedDate.day == now.day) {
+      // Set initial time to current time or later
+      initialTime = TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1)));
+    } else {
+      // For future dates, any time is allowed
+      initialTime = TimeOfDay.fromDateTime(task.reminderDateTime ?? now);
+    }
+
     final TimeOfDay? pickedTime = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.fromDateTime(task.reminderDateTime ?? now),
+      initialTime: initialTime,
     );
 
     if (pickedTime == null) return;
@@ -168,7 +221,16 @@ class _TodoScreenState extends State<TodoScreen> {
       pickedTime.minute,
     );
 
-    _updateTask(task.copyWith(reminderDateTime: newReminderDateTime));
+    // Final validation to ensure the time is in the future
+    if (newReminderDateTime.isBefore(DateTime.now())) {
+      return;
+    }
+
+    await _handleTaskReminder(task, newReminderDateTime);
+  }
+
+  void _clearReminder(Task task) async {
+    await _handleTaskReminder(task, null);
   }
   
   void _restoreTodo(ArchivedTask restoredTask) {
@@ -219,12 +281,29 @@ class _TodoScreenState extends State<TodoScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: const Text('Shutter'),
-        leading: IconButton(icon: const Icon(Icons.palette_outlined), onPressed: _navigateToSettings),
-        actions: [IconButton(icon: const Icon(Icons.archive_outlined), onPressed: _navigateToArchive)],
+        leading: IconButton(
+          icon: const Icon(Icons.palette_outlined), 
+          onPressed: _navigateToSettings
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.archive_outlined), 
+            onPressed: _navigateToArchive
+          ),
+        ],
       ),
       body: Container(
         decoration: backgroundImage != null && File(backgroundImage).existsSync()
-          ? BoxDecoration(image: DecorationImage(image: FileImage(File(backgroundImage)), fit: BoxFit.cover))
+          ? BoxDecoration(
+              image: DecorationImage(
+                image: FileImage(File(backgroundImage)), 
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(
+                  Colors.black.withOpacity(0.1), 
+                  BlendMode.darken
+                ),
+              ),
+            )
           : null,
         child: ReorderableListView.builder(
             padding: const EdgeInsets.only(bottom: 90),
@@ -246,6 +325,9 @@ class _TodoScreenState extends State<TodoScreen> {
                 index: index,
                 onTapped: () => _completeTodo(index),
                 onSetReminder: () => _showDateTimePicker(task),
+                onClearReminder: task.reminderDateTime != null 
+                    ? () => _clearReminder(task)
+                    : null,
               );
             },
             onReorder: (oldIndex, newIndex) {
@@ -259,42 +341,77 @@ class _TodoScreenState extends State<TodoScreen> {
             },
           ),
       ),
-      bottomSheet: _buildInputField(),
+      bottomSheet: _buildInputField(theme, customTheme),
     );
   }
   
-  Widget _buildInputField() {
-    final theme = Theme.of(context);
-    final customTheme = Provider.of<SettingsNotifier>(context, listen: false).currentTheme;
+  Widget _buildInputField(ThemeData theme, CustomTheme customTheme) {
     return Material(
       color: customTheme.inputAreaColor,
       child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+          left: 16,
+          right: 16,
+          top: 8,
+        ),
         child: SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Row(children: [
-              Expanded(child: TextField(
-                controller: _textController,
-                focusNode: _focusNode,
-                style: theme.textTheme.bodyMedium,
-                onSubmitted: (_) => _addTodo(),
-                decoration: const InputDecoration(hintText: 'Tap here to add a new task...'),
-              )),
-              const SizedBox(width: 8),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-                child: _isComposing
-                    ? Material(color: customTheme.secondaryColor, borderRadius: BorderRadius.circular(24),
-                        child: InkWell(borderRadius: BorderRadius.circular(24), onTap: _addTodo,
-                          child: const SizedBox(width: 48, height: 48, child: Icon(Icons.add, color: Colors.white)),
-                        ))
-                    : const SizedBox(width: 48, height: 48),
+          child: Row(children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: TextField(
+                  controller: _textController,
+                  focusNode: _focusNode,
+                  style: theme.textTheme.bodyMedium,
+                  onSubmitted: (_) => _addTodo(),
+                  decoration: InputDecoration(
+                    hintText: 'Add a new task...',
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.hintColor,
+                    ),
+                  ),
+                ),
               ),
-            ]),
-          ),
+            ),
+            const SizedBox(width: 12),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              transitionBuilder: (child, animation) => ScaleTransition(
+                scale: animation, 
+                child: child,
+              ),
+              child: _isComposing
+                  ? Container(
+                      decoration: BoxDecoration(
+                        color: customTheme.secondaryColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: customTheme.secondaryColor.withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        onPressed: _addTodo,
+                        icon: const Icon(Icons.add, color: Colors.white),
+                        splashRadius: 24,
+                      ),
+                    )
+                  : const SizedBox(width: 48, height: 48),
+            ),
+          ]),
         ),
       ),
     );
