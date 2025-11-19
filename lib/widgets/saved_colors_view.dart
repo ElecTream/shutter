@@ -107,6 +107,7 @@ class _SavedColorsViewState extends State<SavedColorsView> {
                   
                   final oldIndex = _localColors.indexOf(_draggedColor!);
                   if (oldIndex != -1 && oldIndex != newIndex) {
+                    HapticFeedback.selectionClick();
                     setState(() {
                       // STEP 1: Update the LOCAL LIST in real-time to drive the animation.
                       final item = _localColors.removeAt(oldIndex);
@@ -128,10 +129,15 @@ class _SavedColorsViewState extends State<SavedColorsView> {
 
     return Draggable<Color>(
       data: color,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedbackOffset: const Offset(0, 0),
       onDragStarted: () {
-        HapticFeedback.lightImpact();
+        HapticFeedback.mediumImpact();
         setState(() => _draggedColor = color);
         widget.onDragUpdate(true);
+      },
+      onDragUpdate: (details) {
+        HapticFeedback.selectionClick();
       },
       onDragEnd: (details) {
         // --- FIX: Only update the color order if the drop was NOT accepted ---
@@ -190,4 +196,3 @@ class _SavedColorsViewState extends State<SavedColorsView> {
     return circle;
   }
 }
-

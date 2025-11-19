@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -30,8 +32,15 @@ class _TodoScreenState extends State<TodoScreen> {
   final FocusNode _focusNode = FocusNode();
   bool _isComposing = false;
   final List<String> _completingTaskIds = [];
-  
+
+  // --- EDIT MODE STATE ---
+  bool _isEditMode = false;
+  Task? _taskBeingEdited;
+  final TextEditingController _editTextController = TextEditingController();
+  String _originalText = '';
+
   final NotificationService _notificationService = NotificationService();
+  StreamSubscription<String>? _completionSubscription;
 
   @override
   void initState() {
@@ -47,7 +56,11 @@ class _TodoScreenState extends State<TodoScreen> {
   Future<void> _initializeNotifications() async {
     try {
       await _notificationService.init();
-      print('Notifications initialized');
+      // Listen for task completions that happen from notifications
+      // while the app is running.
+      _completionSubscription = _notificationService.taskCompletedStream
+          .listen(_completeTaskFromNotification);
+      print('Notifications initialized and stream listening');
     } catch (e) {
       print('Failed to init notifications: $e');
     }
@@ -57,21 +70,24 @@ class _TodoScreenState extends State<TodoScreen> {
   void dispose() {
     _textController.dispose();
     _focusNode.dispose();
+    _editTextController.dispose();
+    _completionSubscription?.cancel();
+    // _notificationService.dispose(); // Don't dispose singleton
     super.dispose();
   }
-  
+
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    
+
     final todosData = prefs.getStringList('todos') ?? [];
     final archivedData = prefs.getStringList('archivedTodos') ?? [];
-    
+
     final now = DateTime.now().millisecondsSinceEpoch;
     final List<ArchivedTask> loadedArchived = archivedData
-      .map((jsonData) => ArchivedTask.fromJson(json.decode(jsonData)))
-      .toList();
-    
+        .map((jsonData) => ArchivedTask.fromJson(json.decode(jsonData)))
+        .toList();
+
     bool archiveWasModified = false;
     final archiveClearDuration = settings.archiveClearDuration;
     if (archiveClearDuration != ArchiveClearDuration.never) {
@@ -80,17 +96,20 @@ class _TodoScreenState extends State<TodoScreen> {
         ArchiveClearDuration.threeDays: const Duration(days: 3),
         ArchiveClearDuration.oneWeek: const Duration(days: 7),
       };
-      
-      final clearThreshold = now - (durationMap[archiveClearDuration]?.inMilliseconds ?? 0);
+
+      final clearThreshold =
+          now - (durationMap[archiveClearDuration]?.inMilliseconds ?? 0);
       final originalCount = loadedArchived.length;
-      loadedArchived.removeWhere((task) => task.archivedAtTimestamp < clearThreshold);
+      loadedArchived
+          .removeWhere((task) => task.archivedAtTimestamp < clearThreshold);
       archiveWasModified = originalCount != loadedArchived.length;
     }
 
     setState(() {
       _todos.clear();
       _archivedTodos.clear();
-      _todos.addAll(todosData.map((jsonString) => Task.fromJson(json.decode(jsonString))));
+      _todos.addAll(todosData.map(
+          (jsonString) => Task.fromJson(json.decode(jsonString))));
       _archivedTodos.addAll(loadedArchived);
     });
 
@@ -101,9 +120,12 @@ class _TodoScreenState extends State<TodoScreen> {
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    final List<String> todosJson = _todos.map((task) => json.encode(task.toJson())).toList();
+    final List<String> todosJson =
+        _todos.map((task) => json.encode(task.toJson())).toList();
     await prefs.setStringList('todos', todosJson);
-    final List<String> archivedJson = _archivedTodos.map((task) => json.encode(task.toJson())).toList();
+    final List<String> archivedJson = _archivedTodos
+        .map((task) => json.encode(task.toJson()))
+        .toList();
     await prefs.setStringList('archivedTodos', archivedJson);
   }
 
@@ -111,7 +133,8 @@ class _TodoScreenState extends State<TodoScreen> {
     if (_textController.text.trim().isNotEmpty) {
       HapticFeedback.lightImpact();
       setState(() {
-        _todos.insert(0, Task(id: const Uuid().v4(), text: _textController.text.trim()));
+        _todos.insert(
+            0, Task(id: const Uuid().v4(), text: _textController.text.trim()));
       });
       _textController.clear();
       _saveData();
@@ -125,25 +148,32 @@ class _TodoScreenState extends State<TodoScreen> {
         _todos.removeWhere((task) => task.id == taskId);
         _completingTaskIds.remove(taskId);
       });
+      // Check if the task was completed from the UI (and not a notification)
+      // If it *was* from a notification, _saveData is already handled.
+      // For simplicity, we can just save again, or add a flag.
+      // Let's just save again to ensure consistency.
       _saveData();
     }
   }
 
+  /// This is called when a user taps "complete" in the UI.
   void _completeTodo(int index) {
+    // Don't complete tasks in edit mode
+    if (_isEditMode) return;
+
     HapticFeedback.lightImpact();
     final taskToComplete = _todos[index];
-    
+
     if (taskToComplete.reminderDateTime != null) {
       _notificationService.cancelNotification(
-        NotificationService.generateNotificationId(taskToComplete.id)
-      );
+          NotificationService.generateNotificationId(taskToComplete.id));
     }
-    
+
     final newArchivedTask = ArchivedTask(
       text: taskToComplete.text,
       archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
     );
-    
+
     setState(() {
       _completingTaskIds.add(taskToComplete.id);
       _archivedTodos.insert(0, newArchivedTask);
@@ -151,6 +181,33 @@ class _TodoScreenState extends State<TodoScreen> {
 
     _saveData();
   }
+
+	// In lib/screens/todo_screen.dart - Add this method to handle notification completions
+	void _completeTaskFromNotification(String taskId) {
+	  final index = _todos.indexWhere((task) => task.id == taskId);
+	  if (index != -1 && mounted) {
+		final taskToComplete = _todos[index];
+
+		// Check if it's already being completed
+		if (_completingTaskIds.contains(taskToComplete.id)) return;
+
+		final newArchivedTask = ArchivedTask(
+		  text: taskToComplete.text,
+		  archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+		);
+
+		setState(() {
+		  _completingTaskIds.add(taskToComplete.id);
+		  _archivedTodos.insert(0, newArchivedTask);
+		});
+
+		// Cancel any reminder for this task
+		if (taskToComplete.reminderDateTime != null) {
+		  _notificationService.cancelNotification(
+			  NotificationService.generateNotificationId(taskToComplete.id));
+		}
+	  }
+	}
 
   void _updateTask(Task updatedTask) {
     final index = _todos.indexWhere((task) => task.id == updatedTask.id);
@@ -162,26 +219,34 @@ class _TodoScreenState extends State<TodoScreen> {
     }
   }
 
-  Future<void> _handleTaskReminder(Task task, DateTime? newReminderDateTime) async {
+  Future<void> _handleTaskReminder(
+      Task task, DateTime? newReminderDateTime) async {
+    // Don't set reminders in edit mode
+    if (_isEditMode) return;
+
     final notificationId = NotificationService.generateNotificationId(task.id);
-    
+
     // Cancel existing reminder first
     await _notificationService.cancelNotification(notificationId);
-    
+
     // Schedule new reminder if time is provided
     if (newReminderDateTime != null) {
+      // Use the new scheduleNotification method
       await _notificationService.scheduleNotification(
-        id: notificationId,
-        title: 'Task Reminder',
-        body: task.text,
+        task: task,
         scheduledTime: newReminderDateTime,
       );
     }
-    
+
     _updateTask(task.copyWith(reminderDateTime: newReminderDateTime));
   }
-  
+
   Future<void> _showDateTimePicker(Task task) async {
+    // Don't show date picker in edit mode
+    if (_isEditMode) return;
+
+    HapticFeedback.selectionClick();
+
     final now = DateTime.now();
     final DateTime? pickedDate = await showDatePicker(
       context: context,
@@ -194,10 +259,10 @@ class _TodoScreenState extends State<TodoScreen> {
 
     // Determine the initial time and minimum time for the time picker
     TimeOfDay initialTime;
-    
+
     // If selected date is today, restrict times to future times only
-    if (pickedDate.year == now.year && 
-        pickedDate.month == now.month && 
+    if (pickedDate.year == now.year &&
+        pickedDate.month == now.month &&
         pickedDate.day == now.day) {
       // Set initial time to current time or later
       initialTime = TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1)));
@@ -223,17 +288,24 @@ class _TodoScreenState extends State<TodoScreen> {
 
     // Final validation to ensure the time is in the future
     if (newReminderDateTime.isBefore(DateTime.now())) {
+      // Optionally show a message to the user
       return;
     }
 
+    HapticFeedback.lightImpact();
     await _handleTaskReminder(task, newReminderDateTime);
   }
 
   void _clearReminder(Task task) async {
+    // Don't clear reminders in edit mode
+    if (_isEditMode) return;
+
+    HapticFeedback.selectionClick();
     await _handleTaskReminder(task, null);
   }
-  
+
   void _restoreTodo(ArchivedTask restoredTask) {
+    HapticFeedback.lightImpact();
     setState(() {
       _archivedTodos.remove(restoredTask);
       _todos.add(Task(id: const Uuid().v4(), text: restoredTask.text));
@@ -242,34 +314,100 @@ class _TodoScreenState extends State<TodoScreen> {
   }
 
   void _clearArchive() {
+    HapticFeedback.mediumImpact();
     setState(() {
       _archivedTodos.clear();
     });
     _saveData();
   }
-  
+
+  // --- EDIT MODE FUNCTIONS ---
+  void _enterEditMode() {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isEditMode = true;
+    });
+  }
+
+  void _exitEditMode() {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _isEditMode = false;
+      _taskBeingEdited = null;
+    });
+    _focusNode.unfocus();
+  }
+
+  void _startEditingTask(Task task) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _taskBeingEdited = task;
+      _originalText = task.text;
+      _editTextController.text = task.text;
+    });
+    // Focus on the text field after a short delay to ensure it's built
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        FocusScope.of(context).requestFocus(_focusNode);
+      }
+    });
+  }
+
+  void _saveTaskEdit() {
+    if (_taskBeingEdited != null &&
+        _editTextController.text.trim().isNotEmpty) {
+      HapticFeedback.lightImpact();
+      final updatedTask = _taskBeingEdited!
+          .copyWith(text: _editTextController.text.trim());
+      _updateTask(updatedTask);
+
+      // If the task had a reminder, we need to reschedule it with the new text
+      if (updatedTask.reminderDateTime != null) {
+        _handleTaskReminder(updatedTask, updatedTask.reminderDateTime);
+      }
+    }
+    setState(() {
+      _taskBeingEdited = null;
+      _originalText = '';
+    });
+    _focusNode.unfocus();
+  }
+
+  void _cancelTaskEdit() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _taskBeingEdited = null;
+      _originalText = '';
+    });
+    _focusNode.unfocus();
+  }
+
   void _navigateToArchive() async {
+    HapticFeedback.selectionClick();
     _focusNode.unfocus();
     await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
-    
+
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
 
-    Navigator.of(context).push(MaterialPageRoute(builder: (context) => ArchiveScreen(
-      archivedTodos: _archivedTodos,
-      onRestore: (task) => _restoreTodo(task),
-      onClear: _clearArchive,
-      taskHeight: settings.taskHeight,
-    )));
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (context) => ArchiveScreen(
+              archivedTodos: _archivedTodos,
+              onRestore: (task) => _restoreTodo(task),
+              onClear: _clearArchive,
+              taskHeight: settings.taskHeight,
+            )));
   }
 
   void _navigateToSettings() async {
+    HapticFeedback.selectionClick();
     _focusNode.unfocus();
     await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
-  
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -282,69 +420,138 @@ class _TodoScreenState extends State<TodoScreen> {
       appBar: AppBar(
         title: const Text('Shutter'),
         leading: IconButton(
-          icon: const Icon(Icons.palette_outlined), 
-          onPressed: _navigateToSettings
-        ),
+            icon: const Icon(Icons.palette_outlined),
+            onPressed: _navigateToSettings),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.archive_outlined), 
-            onPressed: _navigateToArchive
-          ),
+          // Show edit icon when in edit mode, archive icon otherwise
+          _isEditMode
+              ? IconButton(
+                  icon: const Icon(Icons.edit),
+                  tooltip: 'Exit EditMode',
+                  onPressed: _exitEditMode,
+                )
+              : IconButton(
+                  icon: const Icon(Icons.archive_outlined),
+                  onPressed: _navigateToArchive,
+                  onLongPress: _enterEditMode,
+                  tooltip: 'Tap for Archive, Long Press for Edit Mode',
+                ),
         ],
       ),
       body: Container(
         decoration: backgroundImage != null && File(backgroundImage).existsSync()
-          ? BoxDecoration(
-              image: DecorationImage(
-                image: FileImage(File(backgroundImage)), 
-                fit: BoxFit.cover,
-                colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.1), 
-                  BlendMode.darken
+            ? BoxDecoration(
+                image: DecorationImage(
+                  image: FileImage(File(backgroundImage)),
+                  fit: BoxFit.cover,
+                  colorFilter: ColorFilter.mode(
+                      Colors.black.withOpacity(0.1), BlendMode.darken),
                 ),
-              ),
-            )
-          : null,
-        child: ReorderableListView.builder(
-            padding: const EdgeInsets.only(bottom: 90),
-            itemCount: _todos.length,
-            itemBuilder: (context, index) {
-              final task = _todos[index];
-
-              if (_completingTaskIds.contains(task.id)) {
-                return AnimatingTodoItem(
-                  key: ValueKey(task.id),
-                  text: task.text,
-                  onAnimationEnd: () => _onAnimationEnd(task.id),
-                );
-              }
-              
-              return TodoItem(
-                key: ValueKey(task.id),
-                task: task,
-                index: index,
-                onTapped: () => _completeTodo(index),
-                onSetReminder: () => _showDateTimePicker(task),
-                onClearReminder: task.reminderDateTime != null 
-                    ? () => _clearReminder(task)
-                    : null,
-              );
-            },
-            onReorder: (oldIndex, newIndex) {
-              HapticFeedback.selectionClick();
-              setState(() {
-                if (newIndex > oldIndex) newIndex -= 1;
-                final item = _todos.removeAt(oldIndex);
-                _todos.insert(newIndex, item);
-              });
-              _saveData();
-            },
-          ),
+              )
+            : null,
+        child: _isEditMode
+            ? _buildEditModeListView() // Use non-reorderable list in edit mode
+            : _buildNormalListView(), // Use reorderable list in normal mode
       ),
       bottomSheet: _buildInputField(theme, customTheme),
     );
   }
-  
+
+  Widget _buildNormalListView() {
+    return ReorderableListView.builder(
+      padding: const EdgeInsets.only(bottom: 90),
+      buildDefaultDragHandles: false, // Use custom drag handles only
+      itemCount: _todos.length,
+      itemBuilder: (context, index) {
+        // Handle potential race condition if list updates during build
+        if (index >= _todos.length) return const SizedBox.shrink();
+        
+        final task = _todos[index];
+
+        if (_completingTaskIds.contains(task.id)) {
+          return AnimatingTodoItem(
+            key: ValueKey(task.id),
+            task: task,
+            hasReminder: task.reminderDateTime != null,
+            onAnimationEnd: () => _onAnimationEnd(task.id),
+          );
+        }
+
+        final isBeingEdited = _taskBeingEdited?.id == task.id;
+
+        return TodoItem(
+          key: ValueKey(task.id),
+          task: task,
+          index: index,
+          onTapped: () => _completeTodo(index),
+          onSetReminder: () => _showDateTimePicker(task),
+          onClearReminder:
+              task.reminderDateTime != null ? () => _clearReminder(task) : null,
+          isEditMode: _isEditMode,
+          isBeingEdited: isBeingEdited,
+          onStartEditing: () => _startEditingTask(task),
+          onSaveEdit: _saveTaskEdit,
+          onCancelEdit: _cancelTaskEdit,
+          editTextController: _editTextController,
+          focusNode: _focusNode,
+        );
+      },
+      onReorderStart: (index) {
+        HapticFeedback.mediumImpact();
+      },
+      onReorder: (oldIndex, newIndex) {
+        HapticFeedback.lightImpact();
+        setState(() {
+          if (newIndex > oldIndex) newIndex -= 1;
+          final item = _todos.removeAt(oldIndex);
+          _todos.insert(newIndex, item);
+        });
+        _saveData();
+      },
+    );
+  }
+
+  Widget _buildEditModeListView() {
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 90),
+      itemCount: _todos.length,
+      itemBuilder: (context, index) {
+        // Handle potential race condition if list updates during build
+        if (index >= _todos.length) return const SizedBox.shrink();
+        
+        final task = _todos[index];
+
+        if (_completingTaskIds.contains(task.id)) {
+          return AnimatingTodoItem(
+            key: ValueKey(task.id),
+            task: task,
+            hasReminder: task.reminderDateTime != null,
+            onAnimationEnd: () => _onAnimationEnd(task.id),
+          );
+        }
+
+        final isBeingEdited = _taskBeingEdited?.id == task.id;
+
+        return TodoItem(
+          key: ValueKey(task.id),
+          task: task,
+          index: index,
+          onTapped: () => _completeTodo(index),
+          onSetReminder: () => _showDateTimePicker(task),
+          onClearReminder:
+              task.reminderDateTime != null ? () => _clearReminder(task) : null,
+          isEditMode: _isEditMode,
+          isBeingEdited: isBeingEdited,
+          onStartEditing: () => _startEditingTask(task),
+          onSaveEdit: _saveTaskEdit,
+          onCancelEdit: _cancelTaskEdit,
+          editTextController: _editTextController,
+          focusNode: _focusNode,
+        );
+      },
+    );
+  }
+
   Widget _buildInputField(ThemeData theme, CustomTheme customTheme) {
     return Material(
       color: customTheme.inputAreaColor,
@@ -387,7 +594,7 @@ class _TodoScreenState extends State<TodoScreen> {
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
               transitionBuilder: (child, animation) => ScaleTransition(
-                scale: animation, 
+                scale: animation,
                 child: child,
               ),
               child: _isComposing

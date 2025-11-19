@@ -30,7 +30,8 @@ class SettingsNotifier extends ChangeNotifier {
   void _loadSettings() {
     _themeMode = ThemeMode.values[_prefs.getInt('themeMode') ?? ThemeMode.system.index];
     _archiveClearDuration = ArchiveClearDuration.values[_prefs.getInt('archiveClearDuration') ?? ArchiveClearDuration.oneWeek.index];
-    _taskHeight = _prefs.getDouble('taskHeight') ?? 22.0;
+    // --- FIX: Change default taskHeight to represent a scaling factor (1.0 = normal height) ---
+    _taskHeight = _prefs.getDouble('taskHeight') ?? 1.0;
     _animationSpeed = _prefs.getInt('animationSpeed') ?? 450;
     
     final colorsJson = _prefs.getStringList('savedColors') ?? [];
@@ -178,4 +179,3 @@ List<CustomTheme> _createDefaultThemes() {
     ),
   ];
 }
-

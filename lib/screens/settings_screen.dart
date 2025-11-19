@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shutter/models/custom_theme.dart';
 import 'package:shutter/providers/settings_notifier.dart';
@@ -26,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () {
+              HapticFeedback.lightImpact();
               final newThemeTemplate = settings.createNewThemeTemplate()
                 ..id = const Uuid().v4();
               
@@ -50,7 +52,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ButtonSegment<ThemeMode>(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.devices_outlined)),
               ],
               selected: <ThemeMode>{settings.themeMode},
-              onSelectionChanged: (Set<ThemeMode> newSelection) => settings.setThemeMode(newSelection.first),
+              onSelectionChanged: (Set<ThemeMode> newSelection) {
+                HapticFeedback.selectionClick();
+                settings.setThemeMode(newSelection.first);
+              },
               style: SegmentedButton.styleFrom(
                 selectedBackgroundColor: settings.currentTheme.secondaryColor.withOpacity(0.2),
                 selectedForegroundColor: settings.currentTheme.secondaryColor,
@@ -70,7 +75,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ButtonSegment<ArchiveClearDuration>(value: ArchiveClearDuration.never, label: Text('Never')),
               ],
               selected: <ArchiveClearDuration>{settings.archiveClearDuration},
-              onSelectionChanged: (Set<ArchiveClearDuration> newSelection) => settings.setArchiveClearDuration(newSelection.first),
+              onSelectionChanged: (Set<ArchiveClearDuration> newSelection) {
+                HapticFeedback.selectionClick();
+                settings.setArchiveClearDuration(newSelection.first);
+              },
               style: SegmentedButton.styleFrom(
                 selectedBackgroundColor: settings.currentTheme.secondaryColor.withOpacity(0.2),
                 selectedForegroundColor: settings.currentTheme.secondaryColor,
@@ -80,27 +88,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(height: 1),
 
-          _buildSettingRow(
-            'Task box height',
-            Row(
-              children: [
-                const Icon(Icons.unfold_less),
-                Expanded(
-                  child: Slider(
-                    value: settings.taskHeight,
-                    min: 14.0,
-                    max: 32.0,
-                    divisions: 6,
-                    label: '${settings.taskHeight.toStringAsFixed(0)}px',
-                    onChanged: (double value) => settings.setTaskHeight(value),
-                    activeColor: settings.currentTheme.secondaryColor,
-                    inactiveColor: settings.currentTheme.secondaryColor.withOpacity(0.3),
-                  ),
-                ),
-                const Icon(Icons.unfold_more),
-              ],
-            ),
-          ),
+		// In the _buildSettingRow for 'Task box height', update the Slider:
+		_buildSettingRow(
+		  'Task box height',
+		  Row(
+			children: [
+			  const Icon(Icons.unfold_less),
+			  Expanded(
+				child: Slider(
+				  value: settings.taskHeight,
+				  // --- FIX: Update range to represent scaling factors ---
+				  min: 0.7,  // 70% of normal height
+				  max: 1.5,  // 150% of normal height
+				  divisions: 8,
+				  label: '${(settings.taskHeight * 100).toStringAsFixed(0)}%',
+				  onChanged: (double value) {
+                    HapticFeedback.selectionClick();
+                    settings.setTaskHeight(value);
+                  },
+				  activeColor: settings.currentTheme.secondaryColor,
+				  inactiveColor: settings.currentTheme.secondaryColor.withOpacity(0.3),
+				),
+			  ),
+			  const Icon(Icons.unfold_more),
+			],
+		  ),
+		),
           const Divider(height: 1),
 
           _buildSettingRow(
@@ -115,7 +128,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     max: 1000.0,
                     divisions: 18,
                     label: '${settings.animationSpeed}ms',
-                    onChanged: (double value) => settings.setAnimationSpeed(value),
+                    onChanged: (double value) {
+                      HapticFeedback.selectionClick();
+                      settings.setAnimationSpeed(value);
+                    },
                     activeColor: settings.currentTheme.secondaryColor,
                     inactiveColor: settings.currentTheme.secondaryColor.withOpacity(0.3),
                   ),
@@ -153,29 +169,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         IconButton(
                           icon: Icon(Icons.check, color: settings.currentTheme.secondaryColor),
                           onPressed: () {
+                            HapticFeedback.mediumImpact();
                             settings.deleteTheme(themeItem.id);
                             setState(() => _themeIdPendingDeletion = null);
                           },
                         ),
                         IconButton(
                           icon: Icon(Icons.close, color: theme.colorScheme.error),
-                          onPressed: () => setState(() => _themeIdPendingDeletion = null),
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _themeIdPendingDeletion = null);
+                          },
                         ),
                       ])
                     : Row(mainAxisSize: MainAxisSize.min, children: [
                         IconButton(
                           icon: Icon(Icons.edit, color: settings.currentTheme.secondaryColor),
-                          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => ThemeEditorScreen(theme: themeItem.copy()),
-                          )).then((_) => setState(() {})),
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) => ThemeEditorScreen(theme: themeItem.copy()),
+                            )).then((_) => setState(() {}));
+                          },
                         ),
                         if (settings.themes.length > 1)
                           IconButton(
                             icon: Icon(Icons.delete, color: settings.currentTheme.secondaryColor),
-                            onPressed: () => setState(() => _themeIdPendingDeletion = themeItem.id),
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              setState(() => _themeIdPendingDeletion = themeItem.id);
+                            },
                           ),
                       ]),
-                  onTap: () => settings.setCurrentTheme(themeItem.id),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    settings.setCurrentTheme(themeItem.id);
+                  },
                   selected: isSelected,
                   selectedTileColor: themeItem.primaryColor.withOpacity(0.2),
                 );
@@ -204,4 +233,3 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
-

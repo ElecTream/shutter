@@ -31,6 +31,9 @@ dev_dependencies:
   
 flutter:
   uses-material-design: true
+  
+  assets:
+    - assets/sounds/ding.mp3
 
 flutter_launcher_icons:  # Add this configuration section
   android: true

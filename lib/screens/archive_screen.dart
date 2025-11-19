@@ -23,13 +23,11 @@ class ArchiveScreen extends StatefulWidget {
 }
 
 class _ArchiveScreenState extends State<ArchiveScreen> {
-  // --- FIX: A local, mutable copy of the list to ensure the UI updates instantly ---
   late List<ArchivedTask> _localArchivedTodos;
 
   @override
   void initState() {
     super.initState();
-    // Initialize the local list with the data passed from the TodoScreen
     _localArchivedTodos = List.from(widget.archivedTodos);
   }
 
@@ -38,20 +36,20 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final theme = Theme.of(context);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
 
+    // --- FIX: Calculate dynamic height based on scaling factor ---
+    final double calculatedHeight = 56.0 * settings.taskHeight;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Archived Tasks'),
         actions: [
-          // --- FIX: Check the local list to decide if the button should be shown ---
           if (_localArchivedTodos.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_forever_outlined),
               tooltip: 'Clear Archive Manually',
               onPressed: () {
                 HapticFeedback.mediumImpact();
-                // Call the original onClear callback to update the main screen's state
                 widget.onClear();
-                // Also clear the local list and update this screen's UI instantly
                 setState(() {
                   _localArchivedTodos.clear();
                 });
@@ -59,14 +57,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
             ),
         ],
       ),
-      // --- FIX: Check the local list to show the empty message ---
       body: _localArchivedTodos.isEmpty
           ? Center(child: Text('The archive is empty.', style: theme.textTheme.bodyMedium?.copyWith(fontSize: 18)))
           : ListView.builder(
-              // --- FIX: Use the local list's length ---
               itemCount: _localArchivedTodos.length,
               itemBuilder: (context, index) {
-                // --- FIX: Get the task from the local list ---
                 final archivedTask = _localArchivedTodos[index];
                 return Column(
                   children: [
@@ -75,9 +70,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                       child: InkWell(
                         onTap: () {
                           HapticFeedback.lightImpact();
-                          // Call the callback to restore the task on the main screen
                           widget.onRestore(archivedTask);
-                          // --- FIX: Remove the task from the local list and update UI ---
                           setState(() {
                             _localArchivedTodos.removeAt(index);
                           });
@@ -85,7 +78,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                         child: Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: 20,
-                            vertical: settings.taskHeight,
+                            // --- FIX: Use calculated height for vertical padding ---
+                            vertical: calculatedHeight / 2 - 12, // Adjust for text centering
                           ),
                           child: Row(
                             children: [
@@ -112,4 +106,3 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     );
   }
 }
-

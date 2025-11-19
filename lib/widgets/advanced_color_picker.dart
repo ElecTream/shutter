@@ -137,8 +137,8 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
         if (!_isPaletteView)
           TextButton(
             onPressed: () {
-              settings.addSavedColor(currentColor);
               HapticFeedback.lightImpact();
+              settings.addSavedColor(currentColor);
             },
             child: const Text('Save Color'),
           ),
@@ -148,11 +148,17 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
             foregroundColor: MaterialStateProperty.all(theme.colorScheme.primary),
             overlayColor: MaterialStateProperty.all(Colors.transparent),
           ),
-          onPressed: () => setState(() => _isPaletteView = !_isPaletteView),
+          onPressed: () {
+            HapticFeedback.selectionClick();
+            setState(() => _isPaletteView = !_isPaletteView);
+          },
           child: Text(_isPaletteView ? 'Color Picker' : 'My Colors'),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(currentColor),
+          onPressed: () {
+            HapticFeedback.lightImpact();
+            Navigator.of(context).pop(currentColor);
+          },
           child: const Text('Done'),
         ),
       ],
@@ -280,4 +286,3 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
   Widget _buildValueTrack() => Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [HSVColor.fromAHSV(1, _hsvColor.hue, _hsvColor.saturation, 0).toColor(), HSVColor.fromAHSV(1, _hsvColor.hue, _hsvColor.saturation, 1).toColor()])));
   Widget _buildAlphaTrack() => CustomPaint(painter: _CheckerboardPainter(), child: Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [_hsvColor.toColor().withOpacity(0), _hsvColor.toColor().withOpacity(1)]))));
 }
-

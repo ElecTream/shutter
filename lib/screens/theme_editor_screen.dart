@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/custom_theme.dart';
@@ -24,6 +25,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   }
 
   void _saveChanges() {
+    HapticFeedback.lightImpact();
     final themeNotifier = Provider.of<SettingsNotifier>(context, listen: false);
     if (themeNotifier.themes.any((t) => t.id == _editableTheme.id)) {
       themeNotifier.updateTheme(_editableTheme);
@@ -39,6 +41,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   }
 
   void _pickImage() async {
+    HapticFeedback.selectionClick();
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
@@ -86,7 +89,13 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
             title: const Text('Background Image'),
             subtitle: Text(_editableTheme.backgroundImagePath ?? 'None selected'),
             trailing: (_editableTheme.backgroundImagePath != null && _editableTheme.backgroundImagePath!.isNotEmpty)
-              ? IconButton(icon: const Icon(Icons.clear), onPressed: () => setState(() => _editableTheme.backgroundImagePath = null))
+              ? IconButton(
+                  icon: const Icon(Icons.clear), 
+                  onPressed: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _editableTheme.backgroundImagePath = null);
+                  }
+                )
               : null,
             onTap: _pickImage,
           ),
@@ -101,6 +110,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
       title: Text(title, style: theme.textTheme.bodyMedium),
       trailing: GestureDetector(
         onTap: () async {
+          HapticFeedback.selectionClick();
           final Color? pickedColor = await showDialog<Color>(
             context: context,
             builder: (context) => AdvancedColorPicker(initialColor: customColor),
@@ -122,4 +132,3 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
     );
   }
 }
-
