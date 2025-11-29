@@ -67,12 +67,10 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
     final customTheme = settings.currentTheme;
     final hasReminder = widget.hasReminder;
 
-    // Calculate dynamic height based on scaling factor
-    final double baseHeight = 56.0;
-    final double expandedHeight = 68.0; // Reduced from 72.0 to match TodoItem
-    final double calculatedHeight = hasReminder 
-        ? expandedHeight * settings.taskHeight 
-        : baseHeight * settings.taskHeight;
+    // --- FIX: MATCH STANDARDIZED HEIGHT ---
+    // Matching the 72.0 base height used in TodoItem
+    const double standardBaseHeight = 72.0;
+    final double calculatedHeight = standardBaseHeight * settings.taskHeight;
 
     return SizeTransition(
       sizeFactor: _foldUpAnimation,
@@ -90,6 +88,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                 children: [
                   Expanded(
                     child: Column(
+                      // Vertically center content in the standardized box
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -98,6 +97,8 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                           children: [
                             Text(
                               widget.task.text,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodyLarge?.copyWith(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w500,
@@ -116,7 +117,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                           ],
                         ),
                         if (hasReminder) ...[
-                          const SizedBox(height: 2), // Reduced from 4px to match TodoItem
+                          const SizedBox(height: 2),
                           Row(
                             children: [
                               Icon(
@@ -139,7 +140,6 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                       ],
                     ),
                   ),
-                  // FIX: Show both notification and drag handle icons (disabled during animation)
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [

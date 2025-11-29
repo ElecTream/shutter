@@ -45,12 +45,12 @@ class TodoItem extends StatelessWidget {
     final customTheme = settings.currentTheme;
     final hasReminder = task.reminderDateTime != null;
 
-    // Calculate dynamic height based on scaling factor
-    final double baseHeight = 56.0; // Base height for normal task
-    final double expandedHeight = 68.0; // Reduced from 72.0 to bring reminder text closer
-    final double calculatedHeight = hasReminder 
-        ? expandedHeight * settings.taskHeight 
-        : baseHeight * settings.taskHeight;
+    // --- FIX: STANDARDIZED HEIGHT ---
+    // Previously, this switched between 56.0 and 68.0.
+    // Now, we use a fixed base height of 72.0 for ALL tasks.
+    // This ensures the layout doesn't jump or look uneven.
+    const double standardBaseHeight = 72.0; 
+    final double calculatedHeight = standardBaseHeight * settings.taskHeight;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -67,6 +67,8 @@ class TodoItem extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Column(
+                      // --- FIX: MainAxisAlignment.center ensures text is centered 
+                      // vertically if there is no reminder, filling the standardized space.
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -74,7 +76,6 @@ class TodoItem extends StatelessWidget {
                           TextField(
                             controller: editTextController,
                             focusNode: focusNode,
-                            // FIX: Make editable text readable by using theme colors
                             style: theme.textTheme.bodyLarge?.copyWith(
                               fontSize: 17,
                               fontWeight: FontWeight.w500,
@@ -91,13 +92,15 @@ class TodoItem extends StatelessWidget {
                         else
                           Text(
                             task.text,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.bodyLarge?.copyWith(
                               fontSize: 17,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
                         if (hasReminder && !isBeingEdited) ...[
-                          const SizedBox(height: 2), // Reduced from 4px to bring reminder closer
+                          const SizedBox(height: 2), 
                           Row(
                             children: [
                               Icon(
@@ -123,7 +126,6 @@ class TodoItem extends StatelessWidget {
                     ),
                   ),
                   if (isBeingEdited)
-                    // FIX: Add both check and X buttons when editing
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -142,7 +144,6 @@ class TodoItem extends StatelessWidget {
                       ],
                     )
                   else if (!isEditMode)
-                    // FIX: Show both notification and drag handle when not in edit mode
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -156,13 +157,12 @@ class TodoItem extends StatelessWidget {
                           onPressed:
                               hasReminder ? onClearReminder : onSetReminder,
                         ),
-                        // FIX: Make drag handle instantly responsive with ReorderableDragStartListener
                         ReorderableDragStartListener(
                           index: index,
                           child: Material(
                             color: Colors.transparent,
                             child: InkWell(
-                              onTap: () {}, // Empty tap to prevent focus issues
+                              onTap: () {}, 
                               borderRadius: BorderRadius.circular(20),
                               child: Container(
                                 padding: const EdgeInsets.all(8),

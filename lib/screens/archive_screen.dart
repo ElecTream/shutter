@@ -36,8 +36,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     final theme = Theme.of(context);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
 
-    // --- FIX: Calculate dynamic height based on scaling factor ---
-    final double calculatedHeight = 56.0 * settings.taskHeight;
+    // --- FIX: Update to match standardized height (72.0 base) ---
+    final double calculatedHeight = 72.0 * settings.taskHeight;
 
     return Scaffold(
       appBar: AppBar(
@@ -78,8 +78,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                         child: Container(
                           padding: EdgeInsets.symmetric(
                             horizontal: 20,
-                            // --- FIX: Use calculated height for vertical padding ---
-                            vertical: calculatedHeight / 2 - 12, // Adjust for text centering
+                            // Center vertically within the calculated height
+                            vertical: (calculatedHeight > 24) ? (calculatedHeight - 24) / 2 : 0, 
                           ),
                           child: Row(
                             children: [

@@ -29,8 +29,7 @@ class _TodoScreenState extends State<TodoScreen> {
   final List<Task> _todos = [];
   final List<ArchivedTask> _archivedTodos = [];
   final TextEditingController _textController = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-  bool _isComposing = false;
+  final FocusNode _focusNode = new FocusNode(); 
   final List<String> _completingTaskIds = [];
 
   // --- EDIT MODE STATE ---
@@ -47,11 +46,10 @@ class _TodoScreenState extends State<TodoScreen> {
     super.initState();
     _loadData();
     _initializeNotifications();
-    _textController.addListener(() {
-      final isComposing = _textController.text.trim().isNotEmpty;
-      if (_isComposing != isComposing) setState(() => _isComposing = isComposing);
-    });
+    // Removed the notification permission prompt logic from here
   }
+
+  // Removed _requestNotificationPermissions() method
 
   Future<void> _initializeNotifications() async {
     try {
@@ -148,10 +146,6 @@ class _TodoScreenState extends State<TodoScreen> {
         _todos.removeWhere((task) => task.id == taskId);
         _completingTaskIds.remove(taskId);
       });
-      // Check if the task was completed from the UI (and not a notification)
-      // If it *was* from a notification, _saveData is already handled.
-      // For simplicity, we can just save again, or add a flag.
-      // Let's just save again to ensure consistency.
       _saveData();
     }
   }
@@ -182,7 +176,6 @@ class _TodoScreenState extends State<TodoScreen> {
     _saveData();
   }
 
-	// In lib/screens/todo_screen.dart - Add this method to handle notification completions
 	void _completeTaskFromNotification(String taskId) {
 	  final index = _todos.indexWhere((task) => task.id == taskId);
 	  if (index != -1 && mounted) {
@@ -438,20 +431,31 @@ class _TodoScreenState extends State<TodoScreen> {
                 ),
         ],
       ),
-      body: Container(
-        decoration: backgroundImage != null && File(backgroundImage).existsSync()
-            ? BoxDecoration(
-                image: DecorationImage(
-                  image: FileImage(File(backgroundImage)),
-                  fit: BoxFit.cover,
-                  colorFilter: ColorFilter.mode(
-                      Colors.black.withOpacity(0.1), BlendMode.darken),
-                ),
-              )
-            : null,
-        child: _isEditMode
-            ? _buildEditModeListView() // Use non-reorderable list in edit mode
-            : _buildNormalListView(), // Use reorderable list in normal mode
+      // FIX: Wrap body in GestureDetector to handle deselecting the input box
+      body: GestureDetector(
+        onTap: () {
+          // Dismiss keyboard and deselect input field when tapping empty space
+          if (_focusNode.hasFocus) {
+            _focusNode.unfocus();
+          }
+        },
+        // Use Behavior.translucent to ensure clicks on empty space are caught
+        behavior: HitTestBehavior.translucent,
+        child: Container(
+          decoration: backgroundImage != null && File(backgroundImage).existsSync()
+              ? BoxDecoration(
+                  image: DecorationImage(
+                    image: FileImage(File(backgroundImage)),
+                    fit: BoxFit.cover,
+                    colorFilter: ColorFilter.mode(
+                        Colors.black.withOpacity(0.1), BlendMode.darken),
+                  ),
+                )
+              : null,
+          child: _isEditMode
+              ? _buildEditModeListView() 
+              : _buildNormalListView(),
+        ),
       ),
       bottomSheet: _buildInputField(theme, customTheme),
     );
@@ -459,11 +463,11 @@ class _TodoScreenState extends State<TodoScreen> {
 
   Widget _buildNormalListView() {
     return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: 90),
+      // FIX: Padding adjusted for the consistent, smaller input box height
+      padding: const EdgeInsets.only(bottom: 80), 
       buildDefaultDragHandles: false, // Use custom drag handles only
       itemCount: _todos.length,
       itemBuilder: (context, index) {
-        // Handle potential race condition if list updates during build
         if (index >= _todos.length) return const SizedBox.shrink();
         
         final task = _todos[index];
@@ -513,10 +517,10 @@ class _TodoScreenState extends State<TodoScreen> {
 
   Widget _buildEditModeListView() {
     return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 90),
+      // FIX: Padding adjusted for the consistent, smaller input box height
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: _todos.length,
       itemBuilder: (context, index) {
-        // Handle potential race condition if list updates during build
         if (index >= _todos.length) return const SizedBox.shrink();
         
         final task = _todos[index];
@@ -553,72 +557,78 @@ class _TodoScreenState extends State<TodoScreen> {
   }
 
   Widget _buildInputField(ThemeData theme, CustomTheme customTheme) {
+    // Get safe area and keyboard values explicitly to standardize spacing
+    final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final double safeAreaBottom = MediaQuery.of(context).padding.bottom;
+    
+    // FIX: Consistent vertical buffer used everywhere (Halved from 24.0)
+    const double verticalBuffer = 12.0;
+
+    // Standardized bottom padding:
+    // When keyboard is open: uses keyboard height + 12px buffer
+    // When keyboard is closed: uses safe area + 12px buffer (visually centered)
+    final double bottomPadding = keyboardHeight > 0 
+        ? keyboardHeight + verticalBuffer 
+        : safeAreaBottom + verticalBuffer;
+
+    // FIX: Top padding matches the safe bottom buffer (12.0)
+    const double topPadding = verticalBuffer; 
+
     return Material(
       color: customTheme.inputAreaColor,
       child: Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
           left: 16,
           right: 16,
-          top: 8,
+          top: topPadding, 
+          bottom: bottomPadding,
         ),
-        child: SafeArea(
-          top: false,
-          child: Row(children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: theme.cardColor,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: TextField(
-                  controller: _textController,
-                  focusNode: _focusNode,
-                  style: theme.textTheme.bodyMedium,
-                  onSubmitted: (_) => _addTodo(),
-                  decoration: InputDecoration(
-                    hintText: 'Add a new task...',
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 16,
-                    ),
-                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.hintColor,
-                    ),
-                  ),
-                ),
+        child: TextField(
+          controller: _textController,
+          focusNode: _focusNode,
+          style: theme.textTheme.bodyMedium,
+          onSubmitted: (_) => _addTodo(),
+          decoration: InputDecoration(
+            hintText: 'Add a new task...',
+            
+            filled: true,
+            fillColor: theme.cardColor, 
+
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 16,
+            ),
+            hintStyle: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.hintColor,
+            ),
+
+            // Inactive border - Solid color, 1.0 width
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24), 
+              borderSide: BorderSide(
+                color: customTheme.secondaryColor, 
+                width: 1.0,
               ),
             ),
-            const SizedBox(width: 12),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              transitionBuilder: (child, animation) => ScaleTransition(
-                scale: animation,
-                child: child,
+            
+            // Active border - Solid color, 2.0 width
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24),
+              borderSide: BorderSide(
+                color: customTheme.secondaryColor, 
+                width: 2.0,
               ),
-              child: _isComposing
-                  ? Container(
-                      decoration: BoxDecoration(
-                        color: customTheme.secondaryColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: customTheme.secondaryColor.withOpacity(0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        onPressed: _addTodo,
-                        icon: const Icon(Icons.add, color: Colors.white),
-                        splashRadius: 24,
-                      ),
-                    )
-                  : const SizedBox(width: 48, height: 48),
             ),
-          ]),
+            
+            // Fallback border (Solid 1.0)
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24), 
+              borderSide: BorderSide(
+                color: customTheme.secondaryColor,
+                width: 1.0,
+              ),
+            ),
+          ),
         ),
       ),
     );
