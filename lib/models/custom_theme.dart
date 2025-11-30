@@ -10,7 +10,7 @@ class CustomTheme {
   Color taskTextColor;
   Color strikethroughColor;
   String? backgroundImagePath;
-  final bool isDeletable;
+  bool isDeletable;
 
   CustomTheme({
     required this.id,
@@ -46,6 +46,7 @@ class CustomTheme {
     return CustomTheme(
       id: json['id'],
       name: json['name'],
+      // Use defaults that match the default theme defined in SettingsNotifier
       primaryColor: getColor('primaryColor', Colors.blueGrey),
       secondaryColor: getColor('secondaryColor', Colors.amber.shade700),
       taskBackgroundColor: getColor('taskBackgroundColor', Colors.blueGrey.shade600),
@@ -53,12 +54,16 @@ class CustomTheme {
       taskTextColor: getColor('taskTextColor', Colors.black87),
       strikethroughColor: getColor('strikethroughColor', Colors.black54),
       backgroundImagePath: json['backgroundImagePath'],
-      isDeletable: json['isDeletable'] ?? true,
+      isDeletable: json['isDeletable'] ?? true, // Default to true if not specified
     );
   }
 
   CustomTheme copy() {
     return CustomTheme.fromJson(toJson());
   }
-}
 
+  @override
+  String toString() {
+    return 'CustomTheme(id: $id, name: $name, primaryColor: ${primaryColor.value.toRadixString(16)}, isDeletable: $isDeletable)';
+  }
+}

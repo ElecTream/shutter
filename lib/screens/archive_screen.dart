@@ -8,14 +8,14 @@ class ArchiveScreen extends StatefulWidget {
   final List<ArchivedTask> archivedTodos;
   final Function(ArchivedTask) onRestore;
   final VoidCallback onClear;
-  final double taskHeight;
+  // Removed: final double taskHeight;
 
   const ArchiveScreen({
     super.key,
     required this.archivedTodos,
     required this.onRestore,
     required this.onClear,
-    required this.taskHeight,
+    // Removed: required this.taskHeight,
   });
 
   @override
@@ -34,7 +34,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    // Read the settings for the task height
+    final settings = Provider.of<SettingsNotifier>(context);
 
     // --- FIX: Update to match standardized height (72.0 base) ---
     final double calculatedHeight = 72.0 * settings.taskHeight;

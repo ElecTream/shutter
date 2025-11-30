@@ -26,6 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
+            tooltip: 'Add new theme',
             onPressed: () {
               HapticFeedback.lightImpact();
               final newThemeTemplate = settings.createNewThemeTemplate()
@@ -157,6 +158,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 final themeItem = settings.themes[index];
                 final bool isSelected = themeItem.id == settings.currentTheme.id;
                 final bool isPendingDeletion = _themeIdPendingDeletion == themeItem.id;
+                // Check if the theme is deletable based on its property
+                final bool canDelete = themeItem.isDeletable && settings.themes.length > 1;
 
                 return ListTile(
                   title: Text(
@@ -166,6 +169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   leading: CircleAvatar(backgroundColor: themeItem.primaryColor),
                   trailing: isPendingDeletion
                     ? Row(mainAxisSize: MainAxisSize.min, children: [
+                        // Confirm Delete
                         IconButton(
                           icon: Icon(Icons.check, color: settings.currentTheme.secondaryColor),
                           onPressed: () {
@@ -174,6 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             setState(() => _themeIdPendingDeletion = null);
                           },
                         ),
+                        // Cancel Delete
                         IconButton(
                           icon: Icon(Icons.close, color: theme.colorScheme.error),
                           onPressed: () {
@@ -183,16 +188,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ])
                     : Row(mainAxisSize: MainAxisSize.min, children: [
+                        // Edit Button
                         IconButton(
                           icon: Icon(Icons.edit, color: settings.currentTheme.secondaryColor),
                           onPressed: () {
                             HapticFeedback.selectionClick();
                             Navigator.of(context).push(MaterialPageRoute(
-                              builder: (_) => ThemeEditorScreen(theme: themeItem.copy()),
+                              builder: (_) => ThemeEditorScreen(
+                                // Pass a copy so changes don't affect the original state until saved
+                                theme: themeItem.copy()
+                              ), 
                             )).then((_) => setState(() {}));
                           },
                         ),
-                        if (settings.themes.length > 1)
+                        // Delete Button (only if deletable and > 1 theme exists)
+                        if (canDelete)
                           IconButton(
                             icon: Icon(Icons.delete, color: settings.currentTheme.secondaryColor),
                             onPressed: () {

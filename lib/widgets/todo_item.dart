@@ -45,12 +45,14 @@ class TodoItem extends StatelessWidget {
     final customTheme = settings.currentTheme;
     final hasReminder = task.reminderDateTime != null;
 
-    // --- FIX: STANDARDIZED HEIGHT ---
-    // Previously, this switched between 56.0 and 68.0.
-    // Now, we use a fixed base height of 72.0 for ALL tasks.
-    // This ensures the layout doesn't jump or look uneven.
+    // --- STANDARDIZED HEIGHT ---
     const double standardBaseHeight = 72.0; 
     final double calculatedHeight = standardBaseHeight * settings.taskHeight;
+
+    // Determine the vertical padding needed to center the content within the calculated height
+    final double contentHeight = hasReminder ? 40.0 : 25.0; // Estimate: Task text line height is ~20, reminder is ~14.
+    final double verticalPadding = ((calculatedHeight - contentHeight) / 2).clamp(10.0, 36.0);
+
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -61,14 +63,14 @@ class TodoItem extends StatelessWidget {
             onTap:
                 isBeingEdited ? null : (isEditMode ? onStartEditing : onTapped),
             child: Container(
-              height: calculatedHeight,
+              height: calculatedHeight, 
+              // Removed vertical padding here, letting the inner Row handle vertical centering
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center, // Center the children of this main Row
                 children: [
                   Expanded(
                     child: Column(
-                      // --- FIX: MainAxisAlignment.center ensures text is centered 
-                      // vertically if there is no reminder, filling the standardized space.
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -125,6 +127,8 @@ class TodoItem extends StatelessWidget {
                       ],
                     ),
                   ),
+                  
+                  // --- Trailing Icons (Corrected Alignment) ---
                   if (isBeingEdited)
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -156,7 +160,9 @@ class TodoItem extends StatelessWidget {
                           ),
                           onPressed:
                               hasReminder ? onClearReminder : onSetReminder,
+                          tooltip: hasReminder ? 'Clear reminder' : 'Set reminder',
                         ),
+                        // Drag handle is wrapped in ReorderableDragStartListener
                         ReorderableDragStartListener(
                           index: index,
                           child: Material(
@@ -180,8 +186,12 @@ class TodoItem extends StatelessWidget {
                         ),
                       ],
                     )
-                  else
-                    const SizedBox.shrink(),
+                  else // Edit mode but not editing this specific task
+                    // Show a simple edit button that starts editing
+                    IconButton(
+                        icon: Icon(Icons.edit, size: 20, color: theme.iconTheme.color),
+                        onPressed: onStartEditing,
+                    )
                 ],
               ),
             ),

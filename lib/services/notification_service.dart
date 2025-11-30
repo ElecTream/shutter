@@ -12,6 +12,9 @@ import 'package:timezone/timezone.dart' as tz;
 /// Payload key for the action
 const String _actionMarkCompleted = 'MARK_COMPLETED';
 
+// Helper to get the singleton instance
+final NotificationService _notificationService = NotificationService();
+
 /// Top-level handler for notification actions when the app is terminated.
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse notificationResponse) async {
@@ -30,14 +33,20 @@ Future<void> _handleMarkCompletedAction(String payload, int notificationId) asyn
     debugPrint('_handleMarkCompletedAction called with payload: $payload');
     final decodedPayload = json.decode(payload);
     final String taskId = decodedPayload['id'];
-    final String taskText = decodedPayload['text'];
+    final String taskText = decodedPayload['text']; // FIX: Corrected typo from decodedPayloadPayload to decodedPayload
+    final String listId = decodedPayload['listId']; // NEW: Get list ID
+
+    // Create list-specific keys
+    final String todosKey = 'todos_$listId';
+    final String archivedTodosKey = 'archivedTodos_$listId';
 
     final prefs = await SharedPreferences.getInstance();
     // Reload prefs to ensure we have the latest data
     await prefs.reload();
 
-    final todosData = prefs.getStringList('todos') ?? [];
-    final archivedData = prefs.getStringList('archivedTodos') ?? [];
+    // Use list-specific keys for loading
+    final todosData = prefs.getStringList(todosKey) ?? [];
+    final archivedData = prefs.getStringList(archivedTodosKey) ?? [];
 
     final List<Task> todos = todosData
         .map((jsonString) => Task.fromJson(json.decode(jsonString)))
@@ -67,18 +76,16 @@ Future<void> _handleMarkCompletedAction(String payload, int notificationId) asyn
     if (wasCompleted) {
       final List<String> todosJson =
           todos.map((task) => json.encode(task.toJson())).toList();
-      await prefs.setStringList('todos', todosJson);
+      await prefs.setStringList(todosKey, todosJson); // Use list-specific key
     }
 
     final List<String> archivedJson =
         archivedTodos.map((task) => json.encode(task.toJson())).toList();
-    await prefs.setStringList('archivedTodos', archivedJson);
+    await prefs.setStringList(archivedTodosKey, archivedJson); // Use list-specific key
     debugPrint('Data saved to SharedPreferences');
 
     // Cancel the notification after completing the task
-    final notificationService = NotificationService();
-    // This is guaranteed to run because notificationId is mandatory.
-    await notificationService._notificationsPlugin.cancel(notificationId);
+    await _notificationService._notificationsPlugin.cancel(notificationId);
     debugPrint('Notification ID $notificationId cancelled.');
 
   } catch (e, stackTrace) {
@@ -101,9 +108,10 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
 
-  final StreamController<String> _taskCompletedStreamController =
+  // Stream now emits a Map containing both taskId and listId
+  final StreamController<Map<String, String>> _taskCompletedStreamController =
       StreamController.broadcast();
-  Stream<String> get taskCompletedStream => _taskCompletedStreamController.stream;
+  Stream<Map<String, String>> get taskCompletedStream => _taskCompletedStreamController.stream;
   
   // Getter for permission status (used for permissions check if needed)
   Future<bool> get areNotificationsEnabled async {
@@ -154,17 +162,17 @@ class NotificationService {
     debugPrint('_handleNotificationResponse: actionId=${notificationResponse.actionId}');
     if (notificationResponse.actionId == _actionMarkCompleted &&
         notificationResponse.payload != null) {
-      // 1. Notify UI first (sends task ID to TodoScreen)
+      // 1. Notify UI first (sends task ID and list ID to ListDetailScreen)
       try {
         final payload = json.decode(notificationResponse.payload!);
         final String taskId = payload['id'];
-        _taskCompletedStreamController.add(taskId);
+        final String listId = payload['listId']; // NEW: Get list ID
+        _taskCompletedStreamController.add({'taskId': taskId, 'listId': listId});
       } catch (e) {
         debugPrint('Error parsing payload in foreground: $e');
       }
       
       // 2. Then update data in background (and cancel notification)
-      // FIX 3: Pass mandatory, non-nullable ID using assertion (!)
       _handleMarkCompletedAction(notificationResponse.payload!, notificationResponse.id!);
     }
   }
@@ -189,6 +197,7 @@ class NotificationService {
   Future<void> scheduleNotification({
     required Task task,
     required DateTime scheduledTime,
+    required String listId, // NEW: Require list ID
   }) async {
     if (!_isInitialized) {
       return;
@@ -197,6 +206,7 @@ class NotificationService {
     final payload = json.encode({
       'id': task.id,
       'text': task.text,
+      'listId': listId, // NEW: Include list ID in payload
     });
 
     try {
@@ -250,6 +260,7 @@ class NotificationService {
   }
 
   static int generateNotificationId(String taskId) {
+    // Generate a consistent, positive integer ID from the task ID
     return taskId.hashCode.abs() % 100000;
   }
 

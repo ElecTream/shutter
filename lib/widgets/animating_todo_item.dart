@@ -35,12 +35,14 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
     _controller = AnimationController(
         vsync: this, duration: Duration(milliseconds: animationSpeed));
 
+    // The strikethrough animation runs for the first 70% of the duration
     _strikeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
           parent: _controller,
           curve: const Interval(0.0, 0.7, curve: Curves.easeOut)),
     );
 
+    // The fold-up (size) animation starts at 10% and finishes at 100%
     _foldUpAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(
           parent: _controller,
@@ -67,8 +69,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
     final customTheme = settings.currentTheme;
     final hasReminder = widget.hasReminder;
 
-    // --- FIX: MATCH STANDARDIZED HEIGHT ---
-    // Matching the 72.0 base height used in TodoItem
+    // --- STANDARDIZED HEIGHT ---
     const double standardBaseHeight = 72.0;
     final double calculatedHeight = standardBaseHeight * settings.taskHeight;
 
@@ -85,6 +86,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
               height: calculatedHeight,
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center, // Center the children of this main Row
                 children: [
                   Expanded(
                     child: Column(
@@ -140,24 +142,22 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                       ],
                     ),
                   ),
+                  // The trailing icons are disabled during the animation
+                  // They are centered vertically due to the parent Row's crossAxisAlignment.center
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        icon: Icon(
-                          hasReminder
-                              ? Icons.notifications_off
-                              : Icons.notifications_none,
-                          size: 20,
-                        ),
+                      // Reminder icon (for display only)
+                      Icon(
+                        hasReminder
+                            ? Icons.notifications_off
+                            : Icons.notifications_none,
+                        size: 20,
                         color: hasReminder
                             ? theme.colorScheme.error
                             : theme.iconTheme.color?.withOpacity(0.6),
-                        tooltip: hasReminder
-                            ? 'Remove reminder'
-                            : 'Set reminder',
-                        onPressed: null,
                       ),
+                      // Drag handle icon (for display only)
                       Icon(
                         Icons.drag_handle,
                         color: theme.iconTheme.color?.withOpacity(0.5),

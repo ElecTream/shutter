@@ -27,6 +27,12 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   void _saveChanges() {
     HapticFeedback.lightImpact();
     final themeNotifier = Provider.of<SettingsNotifier>(context, listen: false);
+    
+    // Ensure we mark newly created themes as deletable if they aren't the default
+    if (_editableTheme.id != 'default') {
+      _editableTheme.isDeletable = true;
+    }
+    
     if (themeNotifier.themes.any((t) => t.id == _editableTheme.id)) {
       themeNotifier.updateTheme(_editableTheme);
     } else {
@@ -36,6 +42,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   
   @override
   void dispose() {
+    // Save changes when navigating away
     _saveChanges();
     super.dispose();
   }
@@ -43,6 +50,7 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
   void _pickImage() async {
     HapticFeedback.selectionClick();
     final picker = ImagePicker();
+    // Use ImageSource.gallery to select a background image
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       setState(() {
@@ -73,18 +81,29 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
             initialValue: _editableTheme.name,
             style: Theme.of(context).textTheme.bodyMedium,
             decoration: const InputDecoration(labelText: 'Theme Name', border: OutlineInputBorder()),
-            onChanged: (value) => _editableTheme.name = value,
+            onChanged: (value) {
+              setState(() => _editableTheme.name = value);
+            },
           ),
           const SizedBox(height: 20),
 
-          _buildColorPickerRow('Title Bar Color', _editableTheme.primaryColor, (color) => setState(() => _editableTheme.primaryColor = color)),
-          _buildColorPickerRow('Accent Color', _editableTheme.secondaryColor, (color) => setState(() => _editableTheme.secondaryColor = color)),
-          _buildColorPickerRow('Task Text Color', _editableTheme.taskTextColor, (color) => setState(() => _editableTheme.taskTextColor = color)),
-          _buildColorPickerRow('Task Background Color', _editableTheme.taskBackgroundColor, (color) => setState(() => _editableTheme.taskBackgroundColor = color)),
-          _buildColorPickerRow('Strikethrough Color', _editableTheme.strikethroughColor, (color) => setState(() => _editableTheme.strikethroughColor = color)),
-          _buildColorPickerRow('Add Task Background Color', _editableTheme.inputAreaColor, (color) => setState(() => _editableTheme.inputAreaColor = color)),
+          // --- Theme Color Pickers ---
+          _buildColorPickerRow('Title Bar Color', _editableTheme.primaryColor, 
+            (color) => setState(() => _editableTheme.primaryColor = color)),
+          _buildColorPickerRow('Accent Color', _editableTheme.secondaryColor, 
+            (color) => setState(() => _editableTheme.secondaryColor = color)),
+          _buildColorPickerRow('Task Text Color', _editableTheme.taskTextColor, 
+            (color) => setState(() => _editableTheme.taskTextColor = color)),
+          _buildColorPickerRow('Task Background Color', _editableTheme.taskBackgroundColor, 
+            (color) => setState(() => _editableTheme.taskBackgroundColor = color)),
+          _buildColorPickerRow('Strikethrough Color', _editableTheme.strikethroughColor, 
+            (color) => setState(() => _editableTheme.strikethroughColor = color)),
+          _buildColorPickerRow('Add Task Background Color', _editableTheme.inputAreaColor, 
+            (color) => setState(() => _editableTheme.inputAreaColor = color)),
 
           const Divider(height: 40),
+          
+          // --- Background Image Picker ---
           ListTile(
             title: const Text('Background Image'),
             subtitle: Text(_editableTheme.backgroundImagePath ?? 'None selected'),
@@ -106,6 +125,8 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
 
   Widget _buildColorPickerRow(String title, Color customColor, ValueChanged<Color> onCustomColorChanged) {
     final theme = Theme.of(context);
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+
     return ListTile(
       title: Text(title, style: theme.textTheme.bodyMedium),
       trailing: GestureDetector(
@@ -113,7 +134,12 @@ class _ThemeEditorScreenState extends State<ThemeEditorScreen> {
           HapticFeedback.selectionClick();
           final Color? pickedColor = await showDialog<Color>(
             context: context,
-            builder: (context) => AdvancedColorPicker(initialColor: customColor),
+            builder: (context) => AdvancedColorPicker(
+              initialColor: customColor,
+              // Pass the necessary functions to manage saved colors
+              onAddSavedColor: settings.addSavedColor,
+              onRemoveSavedColor: settings.removeSavedColor,
+            ),
           );
           if (pickedColor != null) {
             onCustomColorChanged(pickedColor);

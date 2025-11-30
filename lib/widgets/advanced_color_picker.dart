@@ -62,7 +62,15 @@ class _CustomThumbShape extends RoundSliderThumbShape {
 
 class AdvancedColorPicker extends StatefulWidget {
   final Color initialColor;
-  const AdvancedColorPicker({super.key, required this.initialColor});
+  final ValueChanged<Color> onAddSavedColor;
+  final ValueChanged<Color> onRemoveSavedColor;
+
+  const AdvancedColorPicker({
+    super.key,
+    required this.initialColor,
+    required this.onAddSavedColor,
+    required this.onRemoveSavedColor,
+  });
 
   @override
   State<AdvancedColorPicker> createState() => _AdvancedColorPickerState();
@@ -77,11 +85,11 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
   @override
   void initState() {
     super.initState();
-    _updateColor(widget.initialColor);
+    _hsvColor = HSVColor.fromColor(widget.initialColor);
+    _updateRgbaControllers(_hsvColor.toColor());
   }
 
-  void _updateColor(Color color, {bool updateHsv = true}) {
-    if (updateHsv) _hsvColor = HSVColor.fromColor(color);
+  void _updateRgbaControllers(Color color) {
     _rController = TextEditingController(text: color.red.toString());
     _gController = TextEditingController(text: color.green.toString());
     _bController = TextEditingController(text: color.blue.toString());
@@ -92,10 +100,8 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     setState(() {
       _hsvColor = newColor;
       final color = _hsvColor.toColor();
-      _rController.text = color.red.toString();
-      _gController.text = color.green.toString();
-      _bController.text = color.blue.toString();
-      _aController.text = color.alpha.toString();
+      // Only update text controllers when HSV changes, to avoid input lag
+      _updateRgbaControllers(color);
     });
   }
 
@@ -104,7 +110,14 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     final g = int.tryParse(_gController.text) ?? 0;
     final b = int.tryParse(_bController.text) ?? 0;
     final a = int.tryParse(_aController.text) ?? 0;
-    final newColor = Color.fromARGB(a.clamp(0, 255), r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
+    
+    // Only update HSV if the change is significant and valid
+    final newColor = Color.fromARGB(
+      a.clamp(0, 255), 
+      r.clamp(0, 255), 
+      g.clamp(0, 255), 
+      b.clamp(0, 255)
+    );
     setState(() => _hsvColor = HSVColor.fromColor(newColor));
   }
   
@@ -119,7 +132,8 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     final theme = Theme.of(context);
     final textColor = theme.textTheme.bodyMedium?.color;
     final currentColor = _hsvColor.toColor();
-    final settings = context.read<SettingsNotifier>();
+    // Watch for saved colors updates (used only in Palette View)
+    final savedColors = context.watch<SettingsNotifier>().savedColors;
 
     return AlertDialog(
       title: Text('Select a Color', textAlign: TextAlign.center, style: TextStyle(color: textColor)),
@@ -127,21 +141,25 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
       content: SizedBox(
         width: 450,
         child: AnimatedSwitcher(
-          duration: Duration.zero,
+          // Use a fade transition for better visual continuity
+          duration: const Duration(milliseconds: 200),
           child: _isPaletteView
-              ? _buildPaletteView(settings)
+              ? _buildPaletteView(savedColors)
               : _buildPickerView(currentColor, theme),
         ),
       ),
       actions: [
         if (!_isPaletteView)
-          TextButton(
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              settings.addSavedColor(currentColor);
-            },
-            child: const Text('Save Color'),
-          ),
+          // Only show 'Save Color' if it's not already saved and limit is not reached
+          if (!savedColors.contains(currentColor) && savedColors.length < 10)
+            TextButton(
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                widget.onAddSavedColor(currentColor);
+              },
+              child: const Text('Save Color'),
+            ),
+        
         TextButton(
           style: ButtonStyle(
             splashFactory: NoSplash.splashFactory,
@@ -199,17 +217,18 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     );
   }
 
-  Widget _buildPaletteView(SettingsNotifier settings) {
+  Widget _buildPaletteView(List<Color> savedColors) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Using a key forces a rebuild when switching views, ensuring consistency
         SavedColorsView(
           key: const ValueKey('palette'),
           onColorSelected: (color) {
             HapticFeedback.lightImpact();
             setState(() {
-              _updateColor(color);
-              _isPaletteView = false;
+              _onColorChanged(HSVColor.fromColor(color)); // Update the color picker state
+              _isPaletteView = false; // Switch back to picker view
             });
           },
           onDragUpdate: _onPaletteDragUpdate,
@@ -218,7 +237,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
           isDragInProgress: _isDraggingInPalette,
           onColorDropped: (color) {
             HapticFeedback.mediumImpact();
-            settings.removeSavedColor(color);
+            widget.onRemoveSavedColor(color);
             // This callback ensures the drag state is reset after deletion.
             _onPaletteDragUpdate(false);
           },
@@ -233,32 +252,35 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     final thumbFillColor = isDark ? Colors.white : Colors.grey.shade800;
     final thumbBorderColor = isDark ? Colors.black.withOpacity(0.5) : Colors.white.withOpacity(0.5);
 
-    return Row(
-      children: [
-        SizedBox(width: 100, child: Text(label, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis)),
-        const SizedBox(width: 16),
-        Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 20,
-              thumbShape: _CustomThumbShape(thumbColor: thumbFillColor, borderColor: thumbBorderColor),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
-              trackShape: const RoundedRectSliderTrackShape(),
-              overlayColor: thumbFillColor.withOpacity(0.2),
-            ),
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                ClipRRect(borderRadius: BorderRadius.circular(10), child: SizedBox(height: 20, child: track)),
-                Slider(
-                  value: value, max: max, onChanged: onChanged,
-                  activeColor: Colors.transparent, inactiveColor: Colors.transparent,
-                ),
-              ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          SizedBox(width: 100, child: Text(label, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 16),
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 20,
+                thumbShape: _CustomThumbShape(thumbColor: thumbFillColor, borderColor: thumbBorderColor),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
+                trackShape: const RoundedRectSliderTrackShape(),
+                overlayColor: thumbFillColor.withOpacity(0.2),
+              ),
+              child: Stack(
+                alignment: Alignment.centerLeft,
+                children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(10), child: SizedBox(height: 20, child: track)),
+                  Slider(
+                    value: value, max: max, onChanged: onChanged,
+                    activeColor: Colors.transparent, inactiveColor: Colors.transparent,
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -275,6 +297,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
           labelText: label,
           labelStyle: TextStyle(color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7)),
           border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         ),
         onChanged: (_) => _onRgbaChanged(),
       ),

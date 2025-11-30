@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/custom_theme.dart';
+import '../models/list.dart'; // NEW
 
 enum ArchiveClearDuration { oneDay, threeDays, oneWeek, never }
 
@@ -14,6 +15,10 @@ class SettingsNotifier extends ChangeNotifier {
   late double _taskHeight;
   late int _animationSpeed;
   List<Color> _savedColors = [];
+  
+  // NEW: List management
+  List<TaskList> _taskLists = [];
+  TaskList? _currentList; // Optional: May be used for tracking the last viewed list
 
   SettingsNotifier(this._prefs) {
     _loadSettings();
@@ -26,17 +31,20 @@ class SettingsNotifier extends ChangeNotifier {
   double get taskHeight => _taskHeight;
   int get animationSpeed => _animationSpeed;
   List<Color> get savedColors => _savedColors;
+  // NEW: Getters for lists
+  List<TaskList> get taskLists => _taskLists;
+  TaskList? get currentList => _currentList;
 
   void _loadSettings() {
     _themeMode = ThemeMode.values[_prefs.getInt('themeMode') ?? ThemeMode.system.index];
     _archiveClearDuration = ArchiveClearDuration.values[_prefs.getInt('archiveClearDuration') ?? ArchiveClearDuration.oneWeek.index];
-    // --- FIX: Change default taskHeight to represent a scaling factor (1.0 = normal height) ---
     _taskHeight = _prefs.getDouble('taskHeight') ?? 1.0;
     _animationSpeed = _prefs.getInt('animationSpeed') ?? 450;
     
     final colorsJson = _prefs.getStringList('savedColors') ?? [];
     _savedColors = colorsJson.map((hex) => Color(int.parse(hex))).toList();
     _loadThemes();
+    _loadTaskLists(); // NEW: Load lists
   }
 
   void _loadThemes() {
@@ -63,22 +71,76 @@ class SettingsNotifier extends ChangeNotifier {
       return fallbackTheme;
     });
   }
+
+  // NEW: List management persistence
+  void _loadTaskLists() {
+    final listsJson = _prefs.getString('taskLists');
+    if (listsJson != null) {
+      final decoded = jsonDecode(listsJson) as List;
+      _taskLists = decoded.map((listJson) => TaskList.fromJson(listJson)).toList();
+    } else {
+      // Create a default list if none exist
+      final defaultList = TaskList.createNew(name: 'My Tasks');
+      _taskLists = [defaultList];
+    }
+  }
+
+  Future<void> _saveTaskLists() async {
+    final listsJson = jsonEncode(_taskLists.map((list) => list.toJson()).toList());
+    await _prefs.setString('taskLists', listsJson);
+    notifyListeners();
+  }
+
+  void addTaskList(TaskList list) {
+    _taskLists.insert(0, list);
+    _saveTaskLists();
+  }
+
+  void updateTaskList(TaskList list) {
+    final index = _taskLists.indexWhere((t) => t.id == list.id);
+    if (index != -1) {
+      _taskLists[index] = list;
+      _saveTaskLists();
+    }
+  }
+
+  Future<void> deleteTaskList(String listId) async {
+    if (_taskLists.length <= 1) return; // Prevent deleting the last list
+
+    _taskLists.removeWhere((t) => t.id == listId);
+    await _saveTaskLists();
+    
+    // Also delete all related data (tasks and archives)
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('todos_$listId');
+    await prefs.remove('archivedTodos_$listId');
+  }
   
+  List<CustomTheme> _createDefaultThemes() {
+    return [
+      CustomTheme(
+        id: 'default',
+        name: 'Default',
+        primaryColor: Colors.blueGrey,
+        secondaryColor: Colors.amber.shade700,
+        taskBackgroundColor: Colors.blueGrey.shade600,
+        inputAreaColor: Colors.blueGrey.shade700,
+        taskTextColor: Colors.black87,
+        strikethroughColor: Colors.black54,
+        isDeletable: false, // Default theme should not be deletable
+      ),
+    ];
+  }
+
   CustomTheme createNewThemeTemplate() {
-    return CustomTheme(
-      id: '',
-      name: 'New Theme',
-      primaryColor: Colors.blueGrey,
-      secondaryColor: Colors.amber.shade700,
-      taskBackgroundColor: Colors.blueGrey.shade600,
-      inputAreaColor: Colors.blueGrey.shade700,
-      taskTextColor: Colors.black87,
-      strikethroughColor: Colors.black54,
-    );
+    return _createDefaultThemes().first.copy()
+      ..name = 'New Theme'
+      ..isDeletable = true;
   }
 
   Future<void> _saveThemes() async {
-    final themesJson = jsonEncode(_themes.map((theme) => theme.toJson()).toList());
+    final themesToSave = _themes.where((t) => t.isDeletable || t.id != 'default').toList();
+    final themesJson = jsonEncode(themesToSave.map((theme) => theme.toJson()).toList());
     await _prefs.setString('customThemes', themesJson);
     notifyListeners();
   }
@@ -106,7 +168,8 @@ class SettingsNotifier extends ChangeNotifier {
   }
 
   void deleteTheme(String themeId) {
-    if (_themes.length <= 1) return;
+    final themeToDelete = _themes.firstWhere((t) => t.id == themeId);
+    if (_themes.length <= 1 || !themeToDelete.isDeletable) return;
     
     _themes.removeWhere((t) => t.id == themeId);
     if (_currentTheme.id == themeId) {
@@ -140,7 +203,7 @@ class SettingsNotifier extends ChangeNotifier {
   }
   
   void addSavedColor(Color color) {
-    if (!_savedColors.contains(color)) {
+    if (!_savedColors.contains(color) && _savedColors.length < 10) {
       _savedColors.add(color);
       _saveColors();
       notifyListeners();
@@ -163,19 +226,4 @@ class SettingsNotifier extends ChangeNotifier {
     final colorHexes = _savedColors.map((c) => c.value.toString()).toList();
     await _prefs.setStringList('savedColors', colorHexes);
   }
-}
-
-List<CustomTheme> _createDefaultThemes() {
-  return [
-    CustomTheme(
-      id: 'default',
-      name: 'Default',
-      primaryColor: Colors.blueGrey,
-      secondaryColor: Colors.amber.shade700,
-      taskBackgroundColor: Colors.blueGrey.shade600,
-      inputAreaColor: Colors.blueGrey.shade700,
-      taskTextColor: Colors.black87,
-      strikethroughColor: Colors.black54,
-    ),
-  ];
 }
