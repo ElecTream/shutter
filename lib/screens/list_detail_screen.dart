@@ -26,7 +26,8 @@ class ListDetailScreen extends StatefulWidget {
   State<ListDetailScreen> createState() => _ListDetailScreenState();
 }
 
-class _ListDetailScreenState extends State<ListDetailScreen> {
+class _ListDetailScreenState extends State<ListDetailScreen>
+    with WidgetsBindingObserver {
   final List<Task> _todos = [];
   final List<ArchivedTask> _archivedTodos = [];
   final TextEditingController _textController = TextEditingController();
@@ -50,10 +51,20 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _todosKey = 'todos_${widget.list.id}';
     _archivedTodosKey = 'archivedTodos_${widget.list.id}';
     _loadData();
     _initializeNotifications();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Covers the killed-app case: background handler wrote to SharedPreferences,
+      // reload pulls the updated state now that we're back in foreground.
+      _loadData();
+    }
   }
   
   @override
@@ -84,6 +95,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _textController.dispose();
     _focusNode.dispose();
     _editTextController.dispose();
@@ -255,6 +267,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
     if (_isEditMode) return;
 
     HapticFeedback.selectionClick();
+    await _notificationService.requestPermission();
 
     final now = DateTime.now();
     final DateTime? pickedDate = await showDatePicker(

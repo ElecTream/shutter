@@ -55,6 +55,10 @@
         <receiver
             android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.FlutterLocalNotificationsReceiver"/>
+
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"/>
             
         <!-- Service for Android 14+ -->
         <service
@@ -62,25 +66,6 @@
             android:exported="false"
             android:foregroundServiceType="shortService" />
         
-        <!-- Android Alarm Manager Plus v5.0.0 components -->
-        <service
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmService"
-            android:permission="android.permission.BIND_JOB_SERVICE"
-            android:exported="false"/>
-        <receiver
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
-            android:exported="false"/>
-        <receiver
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
-            android:enabled="false"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED"/>
-                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
-                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
-            </intent-filter>
-        </receiver>
-            
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

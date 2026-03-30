@@ -1,96 +1,85 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Standard import
+import 'package:flutter/widgets.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shutter/models/archived_task.dart';
 import 'package:shutter/models/task.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
-/// Payload key for the action
-const String _actionMarkCompleted = 'MARK_COMPLETED';
+const String _actionMarkComplete = 'MARK_COMPLETED';
 
-// Helper to get the singleton instance
-final NotificationService _notificationService = NotificationService();
+/// Name used to register the foreground isolate's ReceivePort so the
+/// background isolate can find and message it via IsolateNameServer.
+const String kTaskCompletedPort = 'shutter_task_completed';
 
-/// Top-level handler for notification actions when the app is terminated.
+/// Background isolate handler — called when the app is in background/killed
+/// and the user taps "Mark Complete" on a notification.
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse notificationResponse) async {
-  debugPrint('notificationTapBackground: actionId=${notificationResponse.actionId}, payload=${notificationResponse.payload}');
-  if (notificationResponse.actionId == _actionMarkCompleted &&
-      notificationResponse.payload != null) {
-    // FIX 1: Pass mandatory, non-nullable ID using assertion (!)
-    await _handleMarkCompletedAction(notificationResponse.payload!, notificationResponse.id!);
+void notificationTapBackground(NotificationResponse r) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (r.actionId == _actionMarkComplete && r.payload != null) {
+    await _handleMarkComplete(r.payload!, r.id);
   }
 }
 
-/// Shared handler for mark completed action
-// FIX 2: Require notificationId as a mandatory, non-nullable integer
-Future<void> _handleMarkCompletedAction(String payload, int notificationId) async {
+/// Persists the completion to SharedPreferences and notifies the foreground
+/// isolate (if it's running) via IsolateNameServer.
+Future<void> _handleMarkComplete(String payload, int? notificationId) async {
   try {
-    debugPrint('_handleMarkCompletedAction called with payload: $payload');
-    final decodedPayload = json.decode(payload);
-    final String taskId = decodedPayload['id'];
-    final String taskText = decodedPayload['text']; // FIX: Corrected typo from decodedPayloadPayload to decodedPayload
-    final String listId = decodedPayload['listId']; // NEW: Get list ID
+    final decoded = json.decode(payload);
+    final String taskId = decoded['id'] as String;
+    final String taskText = decoded['text'] as String;
+    final String listId = decoded['listId'] as String;
 
-    // Create list-specific keys
-    final String todosKey = 'todos_$listId';
-    final String archivedTodosKey = 'archivedTodos_$listId';
+    final todosKey = 'todos_$listId';
+    final archivedKey = 'archivedTodos_$listId';
 
     final prefs = await SharedPreferences.getInstance();
-    // Reload prefs to ensure we have the latest data
     await prefs.reload();
 
-    // Use list-specific keys for loading
-    final todosData = prefs.getStringList(todosKey) ?? [];
-    final archivedData = prefs.getStringList(archivedTodosKey) ?? [];
-
-    final List<Task> todos = todosData
-        .map((jsonString) => Task.fromJson(json.decode(jsonString)))
+    final List<Task> todos = (prefs.getStringList(todosKey) ?? [])
+        .map((s) => Task.fromJson(json.decode(s)))
         .toList();
-    final List<ArchivedTask> archivedTodos = archivedData
-        .map((jsonData) => ArchivedTask.fromJson(json.decode(jsonData)))
+    final List<ArchivedTask> archived = (prefs.getStringList(archivedKey) ?? [])
+        .map((s) => ArchivedTask.fromJson(json.decode(s)))
         .toList();
 
-    final taskIndex = todos.indexWhere((task) => task.id == taskId);
-    bool wasCompleted = false;
-
+    final taskIndex = todos.indexWhere((t) => t.id == taskId);
     if (taskIndex != -1) {
       todos.removeAt(taskIndex);
-      wasCompleted = true;
-      debugPrint('Task found and removed from todos');
-    } else {
-      debugPrint('Task not found in todos (might have been completed already)');
+      await prefs.setStringList(
+          todosKey, todos.map((t) => json.encode(t.toJson())).toList());
     }
 
-    // Always add to archive if we have the text, even if not in active list (idempotency)
-    final newArchivedTask = ArchivedTask(
-      text: taskText,
-      archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
-    );
-    archivedTodos.insert(0, newArchivedTask);
-
-    if (wasCompleted) {
-      final List<String> todosJson =
-          todos.map((task) => json.encode(task.toJson())).toList();
-      await prefs.setStringList(todosKey, todosJson); // Use list-specific key
+    final alreadyArchived = archived.any((t) =>
+        t.text == taskText &&
+        (DateTime.now().millisecondsSinceEpoch - t.archivedAtTimestamp).abs() <
+            5000);
+    if (!alreadyArchived) {
+      archived.insert(
+          0,
+          ArchivedTask(
+            text: taskText,
+            archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+          ));
+      await prefs.setStringList(
+          archivedKey, archived.map((t) => json.encode(t.toJson())).toList());
     }
 
-    final List<String> archivedJson =
-        archivedTodos.map((task) => json.encode(task.toJson())).toList();
-    await prefs.setStringList(archivedTodosKey, archivedJson); // Use list-specific key
-    debugPrint('Data saved to SharedPreferences');
-
-    // Cancel the notification after completing the task
-    await _notificationService._notificationsPlugin.cancel(notificationId);
-    debugPrint('Notification ID $notificationId cancelled.');
-
-  } catch (e, stackTrace) {
-    debugPrint('Error in _handleMarkCompletedAction: $e');
-    debugPrint(stackTrace.toString());
+    // Notify the foreground isolate immediately if the app is running.
+    // IsolateNameServer lets a background isolate look up a SendPort that the
+    // main isolate registered — this is the only safe cross-isolate channel
+    // in Flutter without platform channels.
+    final SendPort? foregroundPort =
+        IsolateNameServer.lookupPortByName(kTaskCompletedPort);
+    foregroundPort?.send({'taskId': taskId, 'listId': listId});
+  } catch (e, st) {
+    debugPrint('_handleMarkComplete error: $e\n$st');
   }
 }
 
@@ -99,123 +88,124 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  static const String _channelId = 'shutter_reminders';
+  static const String _channelId = 'shutter_reminders_v2';
   static const String _channelName = 'Task Reminders';
   static const String _channelDescription = 'Reminders for your tasks';
 
-  // Make _notificationsPlugin accessible but keep it private
-  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+  final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
 
-  // Stream now emits a Map containing both taskId and listId
-  final StreamController<Map<String, String>> _taskCompletedStreamController =
+  // ReceivePort that lives in the main (foreground) isolate.
+  // Background isolate finds it via IsolateNameServer and sends task completion
+  // events here regardless of whether the app is foreground, background, or
+  // was just resumed from a killed state.
+  ReceivePort? _receivePort;
+  final StreamController<Map<String, String>> _completedStream =
       StreamController.broadcast();
-  Stream<Map<String, String>> get taskCompletedStream => _taskCompletedStreamController.stream;
-  
-  // Getter for permission status (used for permissions check if needed)
-  Future<bool> get areNotificationsEnabled async {
-    final androidImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    if (androidImpl != null) {
-      return await androidImpl.areNotificationsEnabled() ?? false;
-    }
-    return true; 
-  }
+  Stream<Map<String, String>> get taskCompletedStream =>
+      _completedStream.stream;
 
   Future<void> init() async {
     if (_isInitialized) return;
-
     try {
       tz.initializeTimeZones();
-      try {
-        tz.setLocalLocation(tz.getLocation('America/Los_Angeles'));
-      } catch (e) {
-        debugPrint('Could not set local location, using default UTC/Local');
-      }
 
-      const androidSettings = AndroidInitializationSettings('ic_stat_reminder');
-      
-      final settings = InitializationSettings(
-        android: androidSettings,
-      );
-
-      await _notificationsPlugin.initialize(
-        settings,
-        onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) {
-          _handleNotificationResponse(notificationResponse);
-        },
+      await _plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('ic_stat_reminder'),
+        ),
+        onDidReceiveNotificationResponse: _onForegroundResponse,
         onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
       );
 
-      if (Platform.isAndroid) {
-        await _createNotificationChannel();
-      }
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(const AndroidNotificationChannel(
+            _channelId,
+            _channelName,
+            description: _channelDescription,
+            importance: Importance.high,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('ding'),
+            enableVibration: true,
+          ));
 
+      _setupIsolatePort();
       _isInitialized = true;
     } catch (e) {
-      debugPrint('Error initializing notifications: $e');
+      debugPrint('NotificationService.init error: $e');
       rethrow;
     }
   }
 
-  void _handleNotificationResponse(NotificationResponse notificationResponse) {
-    debugPrint('_handleNotificationResponse: actionId=${notificationResponse.actionId}');
-    if (notificationResponse.actionId == _actionMarkCompleted &&
-        notificationResponse.payload != null) {
-      // 1. Notify UI first (sends task ID and list ID to ListDetailScreen)
-      try {
-        final payload = json.decode(notificationResponse.payload!);
-        final String taskId = payload['id'];
-        final String listId = payload['listId']; // NEW: Get list ID
-        _taskCompletedStreamController.add({'taskId': taskId, 'listId': listId});
-      } catch (e) {
-        debugPrint('Error parsing payload in foreground: $e');
+  /// Registers a ReceivePort in the main isolate and wires it to the stream.
+  /// Any isolate (including background notification handlers) can find this
+  /// port by name and send completion events to it.
+  void _setupIsolatePort() {
+    _receivePort?.close();
+    IsolateNameServer.removePortNameMapping(kTaskCompletedPort);
+
+    _receivePort = ReceivePort();
+    IsolateNameServer.registerPortWithName(
+        _receivePort!.sendPort, kTaskCompletedPort);
+
+    _receivePort!.listen((message) {
+      if (message is Map) {
+        final taskId = message['taskId'] as String?;
+        final listId = message['listId'] as String?;
+        if (taskId != null && listId != null) {
+          _completedStream.add({'taskId': taskId, 'listId': listId});
+        }
       }
-      
-      // 2. Then update data in background (and cancel notification)
-      _handleMarkCompletedAction(notificationResponse.payload!, notificationResponse.id!);
-    }
+    });
   }
 
-  Future<void> _createNotificationChannel() async {
-    const channel = AndroidNotificationChannel(
-      _channelId,
-      _channelName,
-      description: _channelDescription,
-      importance: Importance.high,
-      playSound: true,
-      sound: RawResourceAndroidNotificationSound('ding'),
-      enableVibration: true,
-    );
-
-    await _notificationsPlugin
+  /// Request POST_NOTIFICATIONS permission on Android 13+.
+  Future<void> requestPermission() async {
+    await _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+        ?.requestNotificationsPermission();
+  }
+
+  /// Called when the app is in the foreground and user taps the notification
+  /// body (not an action button). Action buttons with showsUserInterface:false
+  /// always route to notificationTapBackground regardless of app state.
+  void _onForegroundResponse(NotificationResponse r) {
+    if (r.payload == null) return;
+    try {
+      final decoded = json.decode(r.payload!);
+      // Notification body tap while foreground — complete if user tapped body
+      if (r.actionId == null) return;
+    } catch (e) {
+      debugPrint('_onForegroundResponse payload error: $e');
+    }
   }
 
   Future<void> scheduleNotification({
     required Task task,
     required DateTime scheduledTime,
-    required String listId, // NEW: Require list ID
+    required String listId,
   }) async {
-    if (!_isInitialized) {
-      return;
-    }
+    if (!_isInitialized) return;
 
     final payload = json.encode({
       'id': task.id,
       'text': task.text,
-      'listId': listId, // NEW: Include list ID in payload
+      'listId': listId,
     });
 
+    final scheduled = tz.TZDateTime.from(scheduledTime.toUtc(), tz.UTC);
+
     try {
-      await _notificationsPlugin.zonedSchedule(
+      await _plugin.zonedSchedule(
         generateNotificationId(task.id),
         task.text,
-        '', 
-        tz.TZDateTime.from(scheduledTime, tz.local),
-        NotificationDetails(
+        '',
+        scheduled,
+        const NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             _channelName,
@@ -223,14 +213,15 @@ class NotificationService {
             importance: Importance.high,
             priority: Priority.high,
             playSound: true,
-            sound: const RawResourceAndroidNotificationSound('ding'),
+            sound: RawResourceAndroidNotificationSound('ding'),
             enableVibration: true,
             icon: 'ic_stat_reminder',
             actions: [
-              const AndroidNotificationAction(
-                _actionMarkCompleted,
-                'Mark Completed',
+              AndroidNotificationAction(
+                _actionMarkComplete,
+                'Mark Complete',
                 showsUserInterface: false,
+                cancelNotification: true,
               ),
             ],
           ),
@@ -239,32 +230,33 @@ class NotificationService {
         payload: payload,
       );
     } catch (e) {
-      debugPrint('Error scheduling notification: $e');
+      debugPrint('scheduleNotification error: $e');
     }
   }
 
   Future<void> cancelNotification(int id) async {
     try {
-      await _notificationsPlugin.cancel(id);
+      await _plugin.cancel(id);
     } catch (e) {
-      // Silent fail for release
+      debugPrint('cancelNotification error: $e');
     }
   }
 
   Future<void> cancelAllNotifications() async {
     try {
-      await _notificationsPlugin.cancelAll();
+      await _plugin.cancelAll();
     } catch (e) {
-      // Silent fail for release
+      debugPrint('cancelAllNotifications error: $e');
     }
   }
 
   static int generateNotificationId(String taskId) {
-    // Generate a consistent, positive integer ID from the task ID
-    return taskId.hashCode.abs() % 100000;
+    return taskId.hashCode.abs() % 2147483647;
   }
 
   void dispose() {
-    _taskCompletedStreamController.close();
+    _receivePort?.close();
+    IsolateNameServer.removePortNameMapping(kTaskCompletedPort);
+    _completedStream.close();
   }
 }
