@@ -31,8 +31,7 @@ class _CustomThumbShape extends RoundSliderThumbShape {
   const _CustomThumbShape({
     this.thumbColor = Colors.white,
     this.borderColor = Colors.black,
-    super.enabledThumbRadius = 12.0,
-  });
+  }) : super(enabledThumbRadius: 12.0);
 
   @override
   void paint(
@@ -50,7 +49,7 @@ class _CustomThumbShape extends RoundSliderThumbShape {
     required Size sizeWithOverflow,
   }) {
     final Canvas canvas = context.canvas;
-    final Paint thumbPaint = Paint()..color = thumbColor.withOpacity(0.5);
+    final Paint thumbPaint = Paint()..color = thumbColor.withValues(alpha: 0.5);
     canvas.drawCircle(center, enabledThumbRadius, thumbPaint);
     final Paint borderPaint = Paint()
       ..color = borderColor
@@ -90,10 +89,11 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
   }
 
   void _updateRgbaControllers(Color color) {
-    _rController = TextEditingController(text: color.red.toString());
-    _gController = TextEditingController(text: color.green.toString());
-    _bController = TextEditingController(text: color.blue.toString());
-    _aController = TextEditingController(text: color.alpha.toString());
+    int ch(double c) => (c * 255.0).round().clamp(0, 255);
+    _rController = TextEditingController(text: ch(color.r).toString());
+    _gController = TextEditingController(text: ch(color.g).toString());
+    _bController = TextEditingController(text: ch(color.b).toString());
+    _aController = TextEditingController(text: ch(color.a).toString());
   }
 
   void _onColorChanged(HSVColor newColor) {
@@ -163,8 +163,8 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
         TextButton(
           style: ButtonStyle(
             splashFactory: NoSplash.splashFactory,
-            foregroundColor: MaterialStateProperty.all(theme.colorScheme.primary),
-            overlayColor: MaterialStateProperty.all(Colors.transparent),
+            foregroundColor: WidgetStateProperty.all(theme.colorScheme.primary),
+            overlayColor: WidgetStateProperty.all(Colors.transparent),
           ),
           onPressed: () {
             HapticFeedback.selectionClick();
@@ -250,7 +250,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final thumbFillColor = isDark ? Colors.white : Colors.grey.shade800;
-    final thumbBorderColor = isDark ? Colors.black.withOpacity(0.5) : Colors.white.withOpacity(0.5);
+    final thumbBorderColor = isDark ? Colors.black.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.5);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -265,7 +265,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
                 thumbShape: _CustomThumbShape(thumbColor: thumbFillColor, borderColor: thumbBorderColor),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
                 trackShape: const RoundedRectSliderTrackShape(),
-                overlayColor: thumbFillColor.withOpacity(0.2),
+                overlayColor: thumbFillColor.withValues(alpha: 0.2),
               ),
               child: Stack(
                 alignment: Alignment.centerLeft,
@@ -295,7 +295,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7)),
+          labelStyle: TextStyle(color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.7)),
           border: const OutlineInputBorder(),
           contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         ),
@@ -307,5 +307,5 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
   Widget _buildHueTrack() => Container(decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00), Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000)])));
   Widget _buildSaturationTrack() => Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [HSVColor.fromAHSV(1, _hsvColor.hue, 0, _hsvColor.value).toColor(), HSVColor.fromAHSV(1, _hsvColor.hue, 1, _hsvColor.value).toColor()])));
   Widget _buildValueTrack() => Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [HSVColor.fromAHSV(1, _hsvColor.hue, _hsvColor.saturation, 0).toColor(), HSVColor.fromAHSV(1, _hsvColor.hue, _hsvColor.saturation, 1).toColor()])));
-  Widget _buildAlphaTrack() => CustomPaint(painter: _CheckerboardPainter(), child: Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [_hsvColor.toColor().withOpacity(0), _hsvColor.toColor().withOpacity(1)]))));
+  Widget _buildAlphaTrack() => CustomPaint(painter: _CheckerboardPainter(), child: Container(decoration: BoxDecoration(gradient: LinearGradient(colors: [_hsvColor.toColor().withValues(alpha: 0), _hsvColor.toColor().withValues(alpha: 1)]))));
 }

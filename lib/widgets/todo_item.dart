@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
@@ -48,11 +47,6 @@ class TodoItem extends StatelessWidget {
     // --- STANDARDIZED HEIGHT ---
     const double standardBaseHeight = 72.0; 
     final double calculatedHeight = standardBaseHeight * settings.taskHeight;
-
-    // Determine the vertical padding needed to center the content within the calculated height
-    final double contentHeight = hasReminder ? 40.0 : 25.0; // Estimate: Task text line height is ~20, reminder is ~14.
-    final double verticalPadding = ((calculatedHeight - contentHeight) / 2).clamp(10.0, 36.0);
-
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,7 +171,7 @@ class TodoItem extends StatelessWidget {
                                   child: Icon(
                                     Icons.drag_handle,
                                     size: 20,
-                                    color: theme.iconTheme.color?.withOpacity(0.5),
+                                    color: theme.iconTheme.color?.withValues(alpha: 0.5),
                                   ),
                                 ),
                               ),

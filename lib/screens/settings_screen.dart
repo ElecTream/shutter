@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:shutter/models/custom_theme.dart';
 import 'package:shutter/providers/settings_notifier.dart';
 import 'package:shutter/screens/theme_editor_screen.dart';
 import 'package:uuid/uuid.dart';
@@ -58,7 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 settings.setThemeMode(newSelection.first);
               },
               style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: settings.currentTheme.secondaryColor.withOpacity(0.2),
+                selectedBackgroundColor: settings.currentTheme.secondaryColor.withValues(alpha: 0.2),
                 selectedForegroundColor: settings.currentTheme.secondaryColor,
                 foregroundColor: theme.textTheme.bodyMedium?.color,
               ),
@@ -81,7 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 settings.setArchiveClearDuration(newSelection.first);
               },
               style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: settings.currentTheme.secondaryColor.withOpacity(0.2),
+                selectedBackgroundColor: settings.currentTheme.secondaryColor.withValues(alpha: 0.2),
                 selectedForegroundColor: settings.currentTheme.secondaryColor,
                 foregroundColor: theme.textTheme.bodyMedium?.color,
               ),
@@ -108,7 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     settings.setTaskHeight(value);
                   },
 				  activeColor: settings.currentTheme.secondaryColor,
-				  inactiveColor: settings.currentTheme.secondaryColor.withOpacity(0.3),
+				  inactiveColor: settings.currentTheme.secondaryColor.withValues(alpha: 0.3),
 				),
 			  ),
 			  const Icon(Icons.unfold_more),
@@ -134,7 +133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       settings.setAnimationSpeed(value);
                     },
                     activeColor: settings.currentTheme.secondaryColor,
-                    inactiveColor: settings.currentTheme.secondaryColor.withOpacity(0.3),
+                    inactiveColor: settings.currentTheme.secondaryColor.withValues(alpha: 0.3),
                   ),
                 ),
                 const Icon(Icons.arrow_downward),
@@ -216,7 +215,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     settings.setCurrentTheme(themeItem.id);
                   },
                   selected: isSelected,
-                  selectedTileColor: themeItem.primaryColor.withOpacity(0.2),
+                  selectedTileColor: themeItem.primaryColor.withValues(alpha: 0.2),
                 );
               },
             ),

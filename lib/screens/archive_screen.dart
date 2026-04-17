@@ -67,7 +67,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 return Column(
                   children: [
                     Material(
-                      color: theme.cardColor.withOpacity(0.7),
+                      color: theme.cardColor.withValues(alpha: 0.7),
                       child: InkWell(
                         onTap: () {
                           HapticFeedback.lightImpact();
@@ -89,7 +89,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                                   archivedTask.text,
                                   style: TextStyle(
                                     fontSize: 17,
-                                    color: (theme.textTheme.bodyMedium?.color ?? Colors.black).withOpacity(0.6),
+                                    color: (theme.textTheme.bodyMedium?.color ?? Colors.black).withValues(alpha: 0.6),
                                     decoration: TextDecoration.lineThrough,
                                   ),
                                 ),

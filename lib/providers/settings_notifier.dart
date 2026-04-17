@@ -223,7 +223,7 @@ class SettingsNotifier extends ChangeNotifier {
   }
 
   Future<void> _saveColors() async {
-    final colorHexes = _savedColors.map((c) => c.value.toString()).toList();
+    final colorHexes = _savedColors.map((c) => c.toARGB32().toString()).toList();
     await _prefs.setStringList('savedColors', colorHexes);
   }
 }

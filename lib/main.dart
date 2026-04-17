@@ -16,7 +16,7 @@ void main() async {
   try {
     await notificationService.init();
   } catch (e) {
-    print('Notification service init failed, continuing without notifications: $e');
+    debugPrint('Notification service init failed, continuing without notifications: $e');
   }
   
   runApp(

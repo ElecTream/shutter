@@ -5,9 +5,28 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1ff2cb27-fe71-425c-a342-011476bc7833" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/main.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/main.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/models/archived_task.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/models/archived_task.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/models/custom_theme.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/models/custom_theme.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/providers/settings_notifier.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/providers/settings_notifier.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/archive_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/archive_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/list_detail_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/list_detail_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/settings_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/settings_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/theme_editor_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/theme_editor_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/todo_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/todo_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/notification_service.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/notification_service.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/utils/app_themes.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/utils/app_themes.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/advanced_color_picker.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/advanced_color_picker.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/animating_todo_item.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/animating_todo_item.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/delete_drop_zone.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/delete_drop_zone.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/saved_colors_view.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/saved_colors_view.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/todo_item.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/todo_item.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/shutter.iml" beforeDir="false" afterPath="$PROJECT_DIR$/shutter.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/widget_test.dart" beforeDir="false" afterPath="$PROJECT_DIR$/test/widget_test.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -49,25 +68,29 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.cidr.known.project.marker": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.readMode.enableVisualFormatting": "true",
-    "cf.first.check.clang-format": "false",
-    "cidr.known.project.marker": "true",
-    "dart.analysis.tool.window.visible": "false",
-    "git-widget-placeholder": "main",
-    "io.flutter.project.isFirstOpen": "true",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "C:/Users/leeam/Documents/Github/shutter",
-    "settings.editor.selected.configurable": "dart.settings",
-    "show.migrate.to.gradle.popup": "false"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.readMode.enableVisualFormatting&quot;: &quot;true&quot;,
+    &quot;cf.first.check.clang-format&quot;: &quot;false&quot;,
+    &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;dart.analysis.tool.window.visible&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;io.flutter.project.isFirstOpen&quot;: &quot;true&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/lsweeney/Documents/GitHub/shutter&quot;,
+    &quot;project.structure.last.edited&quot;: &quot;Project&quot;,
+    &quot;project.structure.proportion&quot;: &quot;0.0&quot;,
+    &quot;project.structure.side.proportion&quot;: &quot;0.0&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;dart.settings&quot;,
+    &quot;show.migrate.to.gradle.popup&quot;: &quot;false&quot;
   }
-}]]></component>
+}</component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
       <changelist id="1ff2cb27-fe71-425c-a342-011476bc7833" name="Changes" comment="" />

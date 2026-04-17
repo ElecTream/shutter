@@ -155,12 +155,12 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                         size: 20,
                         color: hasReminder
                             ? theme.colorScheme.error
-                            : theme.iconTheme.color?.withOpacity(0.6),
+                            : theme.iconTheme.color?.withValues(alpha: 0.6),
                       ),
                       // Drag handle icon (for display only)
                       Icon(
                         Icons.drag_handle,
-                        color: theme.iconTheme.color?.withOpacity(0.5),
+                        color: theme.iconTheme.color?.withValues(alpha: 0.5),
                       ),
                     ],
                   ),

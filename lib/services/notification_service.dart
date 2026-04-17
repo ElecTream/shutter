@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:ui';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -176,7 +175,7 @@ class NotificationService {
   void _onForegroundResponse(NotificationResponse r) {
     if (r.payload == null) return;
     try {
-      final decoded = json.decode(r.payload!);
+      json.decode(r.payload!);
       // Notification body tap while foreground — complete if user tapped body
       if (r.actionId == null) return;
     } catch (e) {

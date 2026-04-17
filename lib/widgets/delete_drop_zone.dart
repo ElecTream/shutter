@@ -38,12 +38,12 @@ class _DeleteDropZoneState extends State<DeleteDropZone> {
               margin: const EdgeInsets.all(16.0),
               decoration: BoxDecoration(
                 // --- FIX: Add a subtle background color on hover ---
-                color: _isDragOver ? Colors.red.withOpacity(0.1) : Colors.transparent,
+                color: _isDragOver ? Colors.red.withValues(alpha: 0.1) : Colors.transparent,
                 // --- FIX: Add a visible, theme-aware border for the hitbox ---
                 border: Border.all(
                   color: _isDragOver
                       ? Colors.red.shade400
-                      : appBarForegroundColor.withOpacity(0.5),
+                      : appBarForegroundColor.withValues(alpha: 0.5),
                   width: 2,
                 ),
                 borderRadius: BorderRadius.circular(12),

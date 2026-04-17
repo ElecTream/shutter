@@ -9,7 +9,7 @@ ThemeData buildThemeData(Brightness brightness, CustomTheme theme) {
   final scaffoldBg = isDark ? const Color(0xFF121212) : const Color(0xFFF7F9FC);
   final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
   final appTextColor = isDark ? const Color(0xDEFFFFFF) : Colors.black87;
-  final hintColor = appTextColor.withOpacity(0.6);
+  final hintColor = appTextColor.withValues(alpha: 0.6);
 
   final appBarBrightness = ThemeData.estimateBrightnessForColor(effectiveTheme.primaryColor);
   final appBarForegroundColor = appBarBrightness == Brightness.dark ? Colors.white : Colors.black;

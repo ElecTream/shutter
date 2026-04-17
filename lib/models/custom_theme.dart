@@ -28,12 +28,12 @@ class CustomTheme {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
-        'primaryColor': primaryColor.value,
-        'secondaryColor': secondaryColor.value,
-        'taskBackgroundColor': taskBackgroundColor.value,
-        'inputAreaColor': inputAreaColor.value,
-        'taskTextColor': taskTextColor.value,
-        'strikethroughColor': strikethroughColor.value,
+        'primaryColor': primaryColor.toARGB32(),
+        'secondaryColor': secondaryColor.toARGB32(),
+        'taskBackgroundColor': taskBackgroundColor.toARGB32(),
+        'inputAreaColor': inputAreaColor.toARGB32(),
+        'taskTextColor': taskTextColor.toARGB32(),
+        'strikethroughColor': strikethroughColor.toARGB32(),
         'backgroundImagePath': backgroundImagePath,
         'isDeletable': isDeletable,
       };
@@ -64,6 +64,6 @@ class CustomTheme {
 
   @override
   String toString() {
-    return 'CustomTheme(id: $id, name: $name, primaryColor: ${primaryColor.value.toRadixString(16)}, isDeletable: $isDeletable)';
+    return 'CustomTheme(id: $id, name: $name, primaryColor: ${primaryColor.toARGB32().toRadixString(16)}, isDeletable: $isDeletable)';
   }
 }

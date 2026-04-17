@@ -178,7 +178,7 @@ class _SavedColorsViewState extends State<SavedColorsView> {
         shape: BoxShape.circle,
         border: Border.all(color: theme.dividerColor, width: 1),
         boxShadow: isDragging
-            ? [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 10, spreadRadius: 2)]
+            ? [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, spreadRadius: 2)]
             : [],
       ),
     );

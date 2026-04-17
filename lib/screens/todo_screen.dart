@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import '../models/list.dart';
 import '../models/custom_theme.dart';
 import '../providers/settings_notifier.dart';
@@ -139,7 +138,7 @@ class _TodoScreenState extends State<TodoScreen> {
                     image: FileImage(File(backgroundImage)),
                     fit: BoxFit.cover,
                     colorFilter: ColorFilter.mode(
-                        Colors.black.withOpacity(0.1), BlendMode.darken),
+                        Colors.black.withValues(alpha: 0.1), BlendMode.darken),
                   ),
                 )
               : null,

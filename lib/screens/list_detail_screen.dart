@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -17,7 +15,6 @@ import '../services/notification_service.dart';
 import '../widgets/animating_todo_item.dart';
 import '../widgets/todo_item.dart';
 import 'archive_screen.dart';
-import 'settings_screen.dart'; // Still used for navigation
 
 class ListDetailScreen extends StatefulWidget {
   final TaskList list;
@@ -31,14 +28,13 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   final List<Task> _todos = [];
   final List<ArchivedTask> _archivedTodos = [];
   final TextEditingController _textController = TextEditingController();
-  final FocusNode _focusNode = new FocusNode(); 
+  final FocusNode _focusNode = FocusNode();
   final List<String> _completingTaskIds = [];
 
   // --- EDIT MODE STATE ---
   bool _isEditMode = false;
   Task? _taskBeingEdited;
   final TextEditingController _editTextController = TextEditingController();
-  String _originalText = '';
 
   final NotificationService _notificationService = NotificationService();
   // FIX: Change stream subscription type to Map<String, String>
@@ -89,7 +85,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       _completionSubscription = _notificationService.taskCompletedStream
           .listen((data) => _completeTaskFromNotification(data['taskId']!, data['listId']!));
     } catch (e) {
-      print('Failed to init notifications: $e');
+      debugPrint('Failed to init notifications: $e');
     }
   }
 
@@ -104,8 +100,9 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final prefs = await SharedPreferences.getInstance();
 
     // Use list-specific keys
     final todosData = prefs.getStringList(_todosKey) ?? [];
@@ -268,6 +265,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
     HapticFeedback.selectionClick();
     await _notificationService.requestPermission();
+    if (!mounted) return;
 
     final now = DateTime.now();
     final DateTime? pickedDate = await showDatePicker(
@@ -289,6 +287,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       initialTime = TimeOfDay.fromDateTime(task.reminderDateTime ?? now);
     }
 
+    if (!mounted) return;
     final TimeOfDay? pickedTime = await showTimePicker(
       context: context,
       initialTime: initialTime,
@@ -357,7 +356,6 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     HapticFeedback.selectionClick();
     setState(() {
       _taskBeingEdited = task;
-      _originalText = task.text;
       _editTextController.text = task.text;
     });
     Future.delayed(const Duration(milliseconds: 100), () {
@@ -381,7 +379,6 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     }
     setState(() {
       _taskBeingEdited = null;
-      _originalText = '';
     });
     _focusNode.unfocus();
   }
@@ -390,7 +387,6 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     HapticFeedback.selectionClick();
     setState(() {
       _taskBeingEdited = null;
-      _originalText = '';
     });
     _focusNode.unfocus();
   }
@@ -460,7 +456,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                     image: FileImage(File(backgroundImage)),
                     fit: BoxFit.cover,
                     colorFilter: ColorFilter.mode(
-                        Colors.black.withOpacity(0.1), BlendMode.darken),
+                        Colors.black.withValues(alpha: 0.1), BlendMode.darken),
                   ),
                 )
               : null,
@@ -469,7 +465,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                   child: Text(
                     'Tap the text box below to add your first task.',
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.hintColor.withOpacity(0.8),
+                      color: theme.hintColor.withValues(alpha: 0.8),
                       fontSize: 16,
                     ),
                     textAlign: TextAlign.center,
