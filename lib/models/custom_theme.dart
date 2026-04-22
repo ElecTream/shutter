@@ -11,6 +11,8 @@ class CustomTheme {
   Color strikethroughColor;
   String? backgroundImagePath;
   bool isDeletable;
+  int version;
+  String? presetId;
 
   CustomTheme({
     required this.id,
@@ -23,6 +25,8 @@ class CustomTheme {
     required this.strikethroughColor,
     this.backgroundImagePath,
     this.isDeletable = true,
+    this.version = 1,
+    this.presetId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -36,6 +40,8 @@ class CustomTheme {
         'strikethroughColor': strikethroughColor.toARGB32(),
         'backgroundImagePath': backgroundImagePath,
         'isDeletable': isDeletable,
+        'version': version,
+        'presetId': presetId,
       };
 
   factory CustomTheme.fromJson(Map<String, dynamic> json) {
@@ -46,7 +52,6 @@ class CustomTheme {
     return CustomTheme(
       id: json['id'],
       name: json['name'],
-      // Use defaults that match the default theme defined in SettingsNotifier
       primaryColor: getColor('primaryColor', Colors.blueGrey),
       secondaryColor: getColor('secondaryColor', Colors.amber.shade700),
       taskBackgroundColor: getColor('taskBackgroundColor', Colors.blueGrey.shade600),
@@ -54,7 +59,9 @@ class CustomTheme {
       taskTextColor: getColor('taskTextColor', Colors.black87),
       strikethroughColor: getColor('strikethroughColor', Colors.black54),
       backgroundImagePath: json['backgroundImagePath'],
-      isDeletable: json['isDeletable'] ?? true, // Default to true if not specified
+      isDeletable: json['isDeletable'] ?? true,
+      version: (json['version'] as int?) ?? 1,
+      presetId: json['presetId'] as String?,
     );
   }
 

@@ -33,7 +33,7 @@ ThemeData buildThemeData(Brightness brightness, CustomTheme theme) {
     dividerColor: isDark ? Colors.white12 : Colors.grey[200],
     iconTheme: IconThemeData(color: effectiveTheme.secondaryColor),
     textTheme: TextTheme(
-      bodyLarge: TextStyle(color: effectiveTheme.taskTextColor),
+      bodyLarge: TextStyle(color: appTextColor),
       bodyMedium: TextStyle(color: appTextColor),
       titleMedium: TextStyle(color: hintColor),
       labelLarge: TextStyle(color: appTextColor),

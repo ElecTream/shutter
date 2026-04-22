@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../models/custom_theme.dart';
 import '../models/task.dart';
 import '../providers/settings_notifier.dart';
 
@@ -10,6 +11,7 @@ class TodoItem extends StatelessWidget {
   final VoidCallback onTapped;
   final VoidCallback onSetReminder;
   final VoidCallback? onClearReminder;
+  final VoidCallback? onLongPress;
 
   // Edit mode properties
   final bool isEditMode;
@@ -20,6 +22,10 @@ class TodoItem extends StatelessWidget {
   final TextEditingController? editTextController;
   final FocusNode? focusNode;
 
+  /// If set, overrides the global theme. Used by list-detail screen to apply
+  /// a per-list theme within its scope.
+  final CustomTheme? themeOverride;
+
   const TodoItem({
     super.key,
     required this.task,
@@ -27,6 +33,7 @@ class TodoItem extends StatelessWidget {
     required this.onTapped,
     required this.onSetReminder,
     this.onClearReminder,
+    this.onLongPress,
     // Edit mode parameters with defaults
     this.isEditMode = false,
     this.isBeingEdited = false,
@@ -35,13 +42,14 @@ class TodoItem extends StatelessWidget {
     this.onCancelEdit,
     this.editTextController,
     this.focusNode,
+    this.themeOverride,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    final customTheme = settings.currentTheme;
+    final customTheme = themeOverride ?? settings.currentTheme;
     final hasReminder = task.reminderDateTime != null;
 
     // --- STANDARDIZED HEIGHT ---
@@ -56,6 +64,7 @@ class TodoItem extends StatelessWidget {
           child: InkWell(
             onTap:
                 isBeingEdited ? null : (isEditMode ? onStartEditing : onTapped),
+            onLongPress: isBeingEdited || isEditMode ? null : onLongPress,
             child: Container(
               height: calculatedHeight, 
               // Removed vertical padding here, letting the inner Row handle vertical centering
@@ -93,10 +102,11 @@ class TodoItem extends StatelessWidget {
                             style: theme.textTheme.bodyLarge?.copyWith(
                               fontSize: 17,
                               fontWeight: FontWeight.w500,
+                              color: customTheme.taskTextColor,
                             ),
                           ),
                         if (hasReminder && !isBeingEdited) ...[
-                          const SizedBox(height: 2), 
+                          const SizedBox(height: 2),
                           Row(
                             children: [
                               Icon(
@@ -115,6 +125,23 @@ class TodoItem extends StatelessWidget {
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
+                              if (task.repeat != null) ...[
+                                const SizedBox(width: 8),
+                                Icon(
+                                  Icons.repeat,
+                                  size: 13,
+                                  color: customTheme.secondaryColor,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  task.repeat!.label,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontSize: 12,
+                                    color: customTheme.secondaryColor,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ],

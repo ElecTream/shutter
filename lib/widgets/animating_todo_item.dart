@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/custom_theme.dart';
 import '../models/task.dart';
 import '../providers/settings_notifier.dart';
 import 'strikethrough_painter.dart';
@@ -8,12 +9,14 @@ class AnimatingTodoItem extends StatefulWidget {
   final Task task;
   final bool hasReminder;
   final VoidCallback onAnimationEnd;
+  final CustomTheme? themeOverride;
 
   const AnimatingTodoItem({
     super.key,
     required this.task,
     required this.hasReminder,
     required this.onAnimationEnd,
+    this.themeOverride,
   });
 
   @override
@@ -66,7 +69,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    final customTheme = settings.currentTheme;
+    final customTheme = widget.themeOverride ?? settings.currentTheme;
     final hasReminder = widget.hasReminder;
 
     // --- STANDARDIZED HEIGHT ---
@@ -104,6 +107,7 @@ class _AnimatingTodoItemState extends State<AnimatingTodoItem>
                               style: theme.textTheme.bodyLarge?.copyWith(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w500,
+                                color: customTheme.taskTextColor,
                               ),
                             ),
                             AnimatedBuilder(

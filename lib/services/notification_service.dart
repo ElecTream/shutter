@@ -6,15 +6,79 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shutter/models/archived_task.dart';
+import 'package:shutter/models/repeat_interval.dart' as model;
 import 'package:shutter/models/task.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 const String _actionMarkComplete = 'MARK_COMPLETED';
 
+const String _channelId = 'shutter_reminders_v2';
+const String _channelName = 'Task Reminders';
+const String _channelDescription = 'Reminders for your tasks';
+
+/// Shared AndroidNotificationDetails used by both foreground and background
+/// scheduling paths. Keeping this at top level means the background isolate
+/// can schedule follow-up reminders without touching the NotificationService
+/// singleton (which isn't available in the bg isolate).
+NotificationDetails _sharedNotificationDetails() {
+  return const NotificationDetails(
+    android: AndroidNotificationDetails(
+      _channelId,
+      _channelName,
+      channelDescription: _channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('ding'),
+      enableVibration: true,
+      icon: 'ic_stat_reminder',
+      actions: [
+        AndroidNotificationAction(
+          _actionMarkComplete,
+          'Mark Complete',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
+    ),
+  );
+}
+
 /// Name used to register the foreground isolate's ReceivePort so the
 /// background isolate can find and message it via IsolateNameServer.
 const String kTaskCompletedPort = 'shutter_task_completed';
+
+class _OriginSnapshot {
+  final String name;
+  final int? color;
+  const _OriginSnapshot(this.name, this.color);
+}
+
+// Reads `taskLists` JSON from prefs and returns the origin snapshot for the
+// given containerId ("root" or a list UUID). Falls back to sensible defaults
+// when the list is missing or prefs are empty — safe for background isolate
+// use where we can't rely on in-memory state.
+_OriginSnapshot _lookupOrigin(SharedPreferences prefs, String containerId) {
+  if (containerId == 'root') return const _OriginSnapshot('Root', null);
+  final raw = prefs.getString('taskLists');
+  if (raw == null) return _OriginSnapshot(containerId, null);
+  try {
+    final decoded = json.decode(raw) as List;
+    for (final entry in decoded) {
+      final map = entry as Map<String, dynamic>;
+      if (map['id'] == containerId) {
+        return _OriginSnapshot(
+          map['name'] as String? ?? containerId,
+          map['color'] as int?,
+        );
+      }
+    }
+  } catch (_) {
+    // Fall through to default.
+  }
+  return _OriginSnapshot(containerId, null);
+}
 
 /// Background isolate handler — called when the app is in background/killed
 /// and the user taps "Mark Complete" on a notification.
@@ -28,6 +92,10 @@ void notificationTapBackground(NotificationResponse r) async {
 
 /// Persists the completion to SharedPreferences and notifies the foreground
 /// isolate (if it's running) via IsolateNameServer.
+///
+/// Recurring tasks (repeat != null) are NOT archived on Mark Complete — their
+/// reminderDateTime is advanced by `repeat.duration` and a fresh notification
+/// is scheduled so the cadence continues even while the app is killed.
 Future<void> _handleMarkComplete(String payload, int? notificationId) async {
   try {
     final decoded = json.decode(payload);
@@ -44,11 +112,47 @@ Future<void> _handleMarkComplete(String payload, int? notificationId) async {
     final List<Task> todos = (prefs.getStringList(todosKey) ?? [])
         .map((s) => Task.fromJson(json.decode(s)))
         .toList();
-    final List<ArchivedTask> archived = (prefs.getStringList(archivedKey) ?? [])
-        .map((s) => ArchivedTask.fromJson(json.decode(s)))
-        .toList();
 
     final taskIndex = todos.indexWhere((t) => t.id == taskId);
+    final Task? existing = taskIndex == -1 ? null : todos[taskIndex];
+    final model.RepeatInterval? repeat = existing?.repeat;
+
+    if (repeat != null && existing != null) {
+      // Recurring path: advance the reminder, keep the task active, schedule
+      // the next notification from this isolate.
+      final nextFire = DateTime.now().add(repeat.duration);
+      final advanced = Task(
+        id: existing.id,
+        text: existing.text,
+        reminderDateTime: nextFire,
+        repeat: repeat,
+      );
+      todos[taskIndex] = advanced;
+      await prefs.setStringList(
+          todosKey, todos.map((t) => json.encode(t.toJson())).toList());
+
+      await _scheduleReminderFromIsolate(
+        task: advanced,
+        scheduledTime: nextFire,
+        listId: listId,
+      );
+
+      final SendPort? fgPort =
+          IsolateNameServer.lookupPortByName(kTaskCompletedPort);
+      fgPort?.send({
+        'taskId': taskId,
+        'listId': listId,
+        'recurring': 'true',
+      });
+      return;
+    }
+
+    // One-shot path: remove from active, archive.
+    final List<ArchivedTask> archived =
+        (prefs.getStringList(archivedKey) ?? [])
+            .map((s) => ArchivedTask.fromJson(json.decode(s)))
+            .toList();
+
     if (taskIndex != -1) {
       todos.removeAt(taskIndex);
       await prefs.setStringList(
@@ -60,11 +164,14 @@ Future<void> _handleMarkComplete(String payload, int? notificationId) async {
         (DateTime.now().millisecondsSinceEpoch - t.archivedAtTimestamp).abs() <
             5000);
     if (!alreadyArchived) {
+      final origin = _lookupOrigin(prefs, listId);
       archived.insert(
           0,
-          ArchivedTask(
+          ArchivedTask.createNew(
             text: taskText,
-            archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+            originId: listId,
+            originNameSnapshot: origin.name,
+            originColorSnapshot: origin.color,
           ));
       await prefs.setStringList(
           archivedKey, archived.map((t) => json.encode(t.toJson())).toList());
@@ -82,14 +189,50 @@ Future<void> _handleMarkComplete(String payload, int? notificationId) async {
   }
 }
 
+/// Schedules a reminder from any isolate. The plugin needs its own init in
+/// the background isolate; the Android channel is already created on-device
+/// so init is cheap and idempotent. Timezone data must be initialized here
+/// too since the bg isolate doesn't share state with the main isolate.
+Future<void> _scheduleReminderFromIsolate({
+  required Task task,
+  required DateTime scheduledTime,
+  required String listId,
+}) async {
+  try {
+    tz.initializeTimeZones();
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('ic_stat_reminder'),
+      ),
+      onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+    );
+
+    final payload = json.encode({
+      'id': task.id,
+      'text': task.text,
+      'listId': listId,
+    });
+    final scheduled = tz.TZDateTime.from(scheduledTime.toUtc(), tz.UTC);
+
+    await plugin.zonedSchedule(
+      NotificationService.generateNotificationId(task.id),
+      task.text,
+      '',
+      scheduled,
+      _sharedNotificationDetails(),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      payload: payload,
+    );
+  } catch (e, st) {
+    debugPrint('_scheduleReminderFromIsolate error: $e\n$st');
+  }
+}
+
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
-
-  static const String _channelId = 'shutter_reminders_v2';
-  static const String _channelName = 'Task Reminders';
-  static const String _channelDescription = 'Reminders for your tasks';
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -204,27 +347,7 @@ class NotificationService {
         task.text,
         '',
         scheduled,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId,
-            _channelName,
-            channelDescription: _channelDescription,
-            importance: Importance.high,
-            priority: Priority.high,
-            playSound: true,
-            sound: RawResourceAndroidNotificationSound('ding'),
-            enableVibration: true,
-            icon: 'ic_stat_reminder',
-            actions: [
-              AndroidNotificationAction(
-                _actionMarkComplete,
-                'Mark Complete',
-                showsUserInterface: false,
-                cancelNotification: true,
-              ),
-            ],
-          ),
-        ),
+        _sharedNotificationDetails(),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         payload: payload,
       );

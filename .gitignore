@@ -1,6 +1,9 @@
 # Git worktrees
 .worktrees/
 
+# Release artifacts from build.ps1
+releases/
+
 # Miscellaneous
 *.class
 *.lock

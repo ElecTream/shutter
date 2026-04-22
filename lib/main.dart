@@ -41,6 +41,15 @@ class ShutterApp extends StatelessWidget {
           themeMode: settingsNotifier.themeMode,
           home: const TodoScreen(),
           debugShowCheckedModeBanner: false,
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(
+                textScaler: TextScaler.linear(settingsNotifier.textScale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
         );
       },
     );

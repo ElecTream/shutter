@@ -1,20 +1,34 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../utils/haptics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:io';
 
 import '../models/archived_task.dart';
-import '../models/task.dart';
 import '../models/custom_theme.dart';
+import '../models/repeat_interval.dart';
+import '../models/task.dart';
 import '../models/list.dart';
 import '../providers/settings_notifier.dart';
 import '../services/notification_service.dart';
-import '../widgets/animating_todo_item.dart';
-import '../widgets/todo_item.dart';
+import '../utils/app_themes.dart';
+import '../widgets/advanced_color_picker.dart';
+import '../widgets/icon_picker_sheet.dart';
+import '../widgets/move_to_sheet.dart';
+import '../widgets/preset_picker_sheet.dart';
+import '../widgets/repeat_picker_sheet.dart';
+import '../widgets/task_list_editor.dart';
 import 'archive_screen.dart';
+import 'theme_editor_screen.dart';
+
+// Wraps a nullable parentId so the reparent dialog can distinguish "user
+// picked 'Top level'" (parentId = null) from "user dismissed" (result = null).
+class _ReparentChoice {
+  final String? parentId;
+  const _ReparentChoice(this.parentId);
+}
 
 class ListDetailScreen extends StatefulWidget {
   final TaskList list;
@@ -29,7 +43,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   final List<ArchivedTask> _archivedTodos = [];
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  final List<String> _completingTaskIds = [];
+  final Set<String> _completingTaskIds = <String>{};
 
   // --- EDIT MODE STATE ---
   bool _isEditMode = false;
@@ -82,8 +96,17 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     try {
       await _notificationService.init();
       // FIX: Update listener to expect and handle Map<String, String>
-      _completionSubscription = _notificationService.taskCompletedStream
-          .listen((data) => _completeTaskFromNotification(data['taskId']!, data['listId']!));
+      _completionSubscription =
+          _notificationService.taskCompletedStream.listen((data) {
+        // Recurring completions advanced the reminder in the bg isolate;
+        // the fg just needs to pick up the updated task row from disk —
+        // archiving would be wrong.
+        if (data['recurring'] == 'true') {
+          if (data['listId'] == widget.list.id) _loadData();
+          return;
+        }
+        _completeTaskFromNotification(data['taskId']!, data['listId']!);
+      });
     } catch (e) {
       debugPrint('Failed to init notifications: $e');
     }
@@ -156,7 +179,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
   void _addTodo() {
     if (_textController.text.trim().isNotEmpty) {
-      HapticFeedback.lightImpact();
+      Haptics.light();
       setState(() {
         _todos.insert(
             0, Task.createNew(text: _textController.text.trim()));
@@ -177,28 +200,67 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     }
   }
 
-  /// This is called when a user taps "complete" in the UI.
-  void _completeTodo(int index) {
+  /// Called when user taps a task tile.
+  ///
+  /// Recurring tasks (`repeat != null`) advance their reminder by one cadence
+  /// and stay active — matches the background "Mark Complete" path so users
+  /// see the same behavior whether the notification fired or they tapped
+  /// in-app.
+  ///
+  /// One-shot tasks archive + play strike-through; `_onAnimationEnd` removes
+  /// the active row once the animation finishes.
+  void _completeTask(Task task) {
     if (_isEditMode) return;
 
-    HapticFeedback.lightImpact();
-    final taskToComplete = _todos[index];
+    Haptics.light();
 
-    if (taskToComplete.reminderDateTime != null) {
-      _notificationService.cancelNotification(
-          NotificationService.generateNotificationId(taskToComplete.id));
+    if (task.repeat != null) {
+      final nextFire = DateTime.now().add(task.repeat!.duration);
+      _handleTaskReminder(task, nextFire, repeat: task.repeat);
+      return;
     }
 
-    final newArchivedTask = ArchivedTask(
-      text: taskToComplete.text,
-      archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+    if (task.reminderDateTime != null) {
+      _notificationService.cancelNotification(
+          NotificationService.generateNotificationId(task.id));
+    }
+
+    final newArchivedTask = ArchivedTask.createNew(
+      text: task.text,
+      originId: widget.list.id,
+      originNameSnapshot: widget.list.name,
+      originColorSnapshot: widget.list.color,
     );
 
     setState(() {
-      _completingTaskIds.add(taskToComplete.id);
+      _completingTaskIds.add(task.id);
       _archivedTodos.insert(0, newArchivedTask);
     });
 
+    _saveData();
+  }
+
+  Future<void> _promptMoveTask(Task task) async {
+    if (_isEditMode) return;
+    final picked = await showMoveToSheet(
+      context,
+      excludeContainerId: widget.list.id,
+    );
+    if (picked == null || !mounted) return;
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    await settings.moveTask(
+      task,
+      fromContainerId: widget.list.id,
+      toContainerId: picked,
+    );
+    if (mounted) await _loadData();
+  }
+
+  void _reorderTasks(int oldIndex, int newIndex) {
+    setState(() {
+      final item = _todos.removeAt(oldIndex);
+      _todos.insert(newIndex, item);
+    });
     _saveData();
   }
 
@@ -213,9 +275,11 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
 		if (_completingTaskIds.contains(taskToComplete.id)) return;
 
-		final newArchivedTask = ArchivedTask(
+		final newArchivedTask = ArchivedTask.createNew(
 		  text: taskToComplete.text,
-		  archivedAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+		  originId: widget.list.id,
+		  originNameSnapshot: widget.list.name,
+		  originColorSnapshot: widget.list.color,
 		);
 
 		setState(() {
@@ -241,29 +305,37 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   Future<void> _handleTaskReminder(
-      Task task, DateTime? newReminderDateTime) async {
+    Task task,
+    DateTime? newReminderDateTime, {
+    RepeatInterval? repeat,
+  }) async {
     if (_isEditMode) return;
 
     final notificationId = NotificationService.generateNotificationId(task.id);
 
     await _notificationService.cancelNotification(notificationId);
 
+    // Update the stored task BEFORE scheduling so the bg isolate, when
+    // Mark Complete fires, reads the correct `repeat` field off prefs.
+    final updated = task.copyWith(
+      reminderDateTime: newReminderDateTime,
+      repeat: newReminderDateTime == null ? null : repeat,
+    );
+    _updateTask(updated);
+
     if (newReminderDateTime != null) {
-      // FIX: Provide the required listId
       await _notificationService.scheduleNotification(
-        task: task,
+        task: updated,
         scheduledTime: newReminderDateTime,
         listId: widget.list.id,
       );
     }
-
-    _updateTask(task.copyWith(reminderDateTime: newReminderDateTime));
   }
 
   Future<void> _showDateTimePicker(Task task) async {
     if (_isEditMode) return;
 
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     await _notificationService.requestPermission();
     if (!mounted) return;
 
@@ -277,14 +349,17 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
     if (pickedDate == null || !mounted) return;
 
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
     TimeOfDay initialTime;
 
     if (pickedDate.year == now.year &&
         pickedDate.month == now.month &&
         pickedDate.day == now.day) {
       initialTime = TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1)));
+    } else if (task.reminderDateTime != null) {
+      initialTime = TimeOfDay.fromDateTime(task.reminderDateTime!);
     } else {
-      initialTime = TimeOfDay.fromDateTime(task.reminderDateTime ?? now);
+      initialTime = settings.defaultReminderTime;
     }
 
     if (!mounted) return;
@@ -307,19 +382,31 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       return;
     }
 
-    HapticFeedback.lightImpact();
-    await _handleTaskReminder(task, newReminderDateTime);
+    if (!mounted) return;
+    // Offer a Repeats step so one-shot stays the default (Never) but users
+    // who want a recurring reminder can pick a cadence in the same flow.
+    final repeatResult = await showRepeatPickerSheet(
+      context,
+      current: task.repeat,
+    );
+    if (!mounted) return;
+    // Dismissal preserves whatever the task already had; explicit pick wins.
+    final RepeatInterval? chosenRepeat =
+        repeatResult == null ? task.repeat : repeatResult.interval;
+
+    Haptics.light();
+    await _handleTaskReminder(task, newReminderDateTime, repeat: chosenRepeat);
   }
 
   void _clearReminder(Task task) async {
     if (_isEditMode) return;
 
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     await _handleTaskReminder(task, null);
   }
 
   void _restoreTodo(ArchivedTask restoredTask) {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     setState(() {
       _archivedTodos.remove(restoredTask);
       _todos.add(Task.createNew(text: restoredTask.text));
@@ -328,7 +415,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   void _clearArchive() {
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
     setState(() {
       _archivedTodos.clear();
     });
@@ -337,14 +424,14 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
   // --- EDIT MODE FUNCTIONS ---
   void _enterEditMode() {
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
     setState(() {
       _isEditMode = true;
     });
   }
 
   void _exitEditMode() {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     setState(() {
       _isEditMode = false;
       _taskBeingEdited = null;
@@ -353,7 +440,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   void _startEditingTask(Task task) {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     setState(() {
       _taskBeingEdited = task;
       _editTextController.text = task.text;
@@ -368,7 +455,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   void _saveTaskEdit() {
     if (_taskBeingEdited != null &&
         _editTextController.text.trim().isNotEmpty) {
-      HapticFeedback.lightImpact();
+      Haptics.light();
       final updatedTask = _taskBeingEdited!
           .copyWith(text: _editTextController.text.trim());
       _updateTask(updatedTask);
@@ -384,7 +471,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   void _cancelTaskEdit() {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     setState(() {
       _taskBeingEdited = null;
     });
@@ -392,7 +479,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   void _navigateToArchive() async {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     _focusNode.unfocus();
     await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
@@ -407,39 +494,445 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   
   // Back button navigates back to the list selection screen
   void _navigateBackToLists() {
-    HapticFeedback.selectionClick();
+    Haptics.selection();
     Navigator.of(context).pop();
+  }
+
+  // --- List customization --------------------------------------------------
+
+  // Resolves the latest TaskList from the provider. The widget's `list` is the
+  // snapshot taken when this screen was pushed; subsequent edits (rename, color
+  // change, icon pick) are only reflected on the provider side, so the screen
+  // must reread on every build to keep the AppBar in sync.
+  TaskList _currentList(SettingsNotifier settings) {
+    return settings.taskLists.firstWhere(
+      (l) => l.id == widget.list.id,
+      orElse: () => widget.list,
+    );
+  }
+
+  Future<void> _promptRenameList() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final controller = TextEditingController(text: current.name);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Rename list'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(fontSize: 16),
+          decoration: const InputDecoration(
+            labelText: 'List name',
+            border: OutlineInputBorder(),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          ),
+          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (result != null && result.isNotEmpty && result != current.name) {
+      settings.updateTaskList(current.copyWith(name: result));
+    }
+  }
+
+  Future<void> _promptChangeColor() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final theme = Theme.of(context);
+    final initial = current.color != null
+        ? Color(current.color!)
+        : theme.colorScheme.primary;
+    final picked = await showDialog<Color>(
+      context: context,
+      builder: (_) => AdvancedColorPicker(
+        initialColor: initial,
+        onAddSavedColor: settings.addSavedColor,
+        onRemoveSavedColor: settings.removeSavedColor,
+      ),
+    );
+    if (!mounted) return;
+    if (picked != null) {
+      settings.updateTaskList(current.copyWith(color: picked.toARGB32()));
+    }
+  }
+
+  Future<void> _promptChangeIcon() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final result = await showIconPickerSheet(context);
+    if (!mounted || result == null) return;
+    // IconPickerResult: exactly-one-of / both-null to clear.
+    settings.updateTaskList(current.copyWith(
+      iconEmoji: result.emoji,
+      iconCodePoint: result.codePoint?.toString(),
+    ));
+  }
+
+  Future<void> _promptDeleteList() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final descendants = settings.descendantsOf(current.id);
+    final taskCount = settings.activeTaskCountFor(current.id, deep: true);
+    final parts = <String>[];
+    if (descendants.isNotEmpty) {
+      parts.add('${descendants.length} sub-list${descendants.length == 1 ? '' : 's'}');
+    }
+    if (taskCount > 0) {
+      parts.add('$taskCount active task${taskCount == 1 ? '' : 's'}');
+    }
+    final detail = parts.isEmpty
+        ? 'Completed items stay in the archive.'
+        : '${parts.join(' and ')} will be removed. Completed items stay in the archive.';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Delete "${current.name}"?'),
+        content: Text(detail),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    Haptics.medium();
+    await settings.cascadeDeleteList(current.id);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _promptCreateSubList() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('New sub-list under "${current.name}"'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'List name'),
+          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || name == null || name.isEmpty) return;
+    Haptics.light();
+    settings.addTaskList(
+      TaskList.createNew(name: name, parentId: current.id),
+    );
+  }
+
+  Future<void> _promptReparent() async {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    // Eligible destinations: Root (null) + every list that isn't this list or
+    // one of its descendants — reparenting into own subtree would cycle.
+    final banned = settings.descendantsOf(current.id).map((l) => l.id).toSet()
+      ..add(current.id);
+    final candidates =
+        settings.taskLists.where((l) => !banned.contains(l.id)).toList();
+
+    final selected = await showDialog<_ReparentChoice>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Move under…'),
+        children: [
+          SimpleDialogOption(
+            child: const Text('Top level (no parent)'),
+            onPressed: () =>
+                Navigator.of(context).pop(const _ReparentChoice(null)),
+          ),
+          const Divider(height: 1),
+          for (final c in candidates)
+            SimpleDialogOption(
+              onPressed: () =>
+                  Navigator.of(context).pop(_ReparentChoice(c.id)),
+              child: Text(c.name),
+            ),
+          if (candidates.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No other lists available.'),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected.parentId == current.parentId) return;
+    Haptics.light();
+    settings.reparentList(current.id, selected.parentId);
+  }
+
+  void _navigateToSubList(TaskList child) {
+    Haptics.selection();
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ListDetailScreen(list: child)),
+    );
+  }
+
+  Future<void> _openAppearanceEditor() async {
+    Haptics.selection();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final picked = await PresetPickerSheet.show(
+      context,
+      globalThemes: settings.themes,
+      currentOverride: current.themeOverride,
+    );
+    if (picked == null || !mounted) return;
+    picked.isDeletable = true;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ThemeEditorScreen(theme: picked, listId: current.id),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _resetAppearance() async {
+    Haptics.selection();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Reset appearance?'),
+        content: Text(
+          '"${current.name}" will go back to using the global theme.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    settings.updateListTheme(current.id, null);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final outerBrightness = Theme.of(context).brightness;
     final settings = Provider.of<SettingsNotifier>(context);
-    final customTheme = settings.currentTheme;
+    final current = _currentList(settings);
+    final customTheme = settings.effectiveThemeFor(current);
     final backgroundImage = customTheme.backgroundImagePath;
+    final hasOverride = current.themeOverride != null;
 
+    return Theme(
+      data: buildThemeData(outerBrightness, customTheme),
+      child: Builder(
+        builder: (context) {
+          final theme = Theme.of(context);
+          return _buildScaffold(
+            context,
+            theme: theme,
+            settings: settings,
+            current: current,
+            customTheme: customTheme,
+            backgroundImage: backgroundImage,
+            hasOverride: hasOverride,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildScaffold(
+    BuildContext context, {
+    required ThemeData theme,
+    required SettingsNotifier settings,
+    required TaskList current,
+    required CustomTheme customTheme,
+    required String? backgroundImage,
+    required bool hasOverride,
+  }) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        // Show the list name
-        title: Text(widget.list.name),
-        // Back button replaces the settings button
+        title: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: buildListIcon(
+                emoji: current.iconEmoji,
+                codePoint: current.iconCodePoint,
+                color: theme.appBarTheme.foregroundColor ??
+                    theme.iconTheme.color ??
+                    Colors.white,
+                size: 22,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                current.name,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: _navigateBackToLists),
         actions: [
-          _isEditMode
-              ? IconButton(
-                  icon: const Icon(Icons.edit),
-                  tooltip: 'Exit EditMode',
-                  onPressed: _exitEditMode,
-                )
-              : IconButton(
-                  icon: const Icon(Icons.archive_outlined),
-                  onPressed: _navigateToArchive,
-                  onLongPress: _enterEditMode,
-                  tooltip: 'Tap for Archive, Long Press for Edit Mode',
+          IconButton(
+            icon: Icon(_isEditMode ? Icons.edit_off : Icons.edit_outlined),
+            tooltip: _isEditMode ? 'Exit edit mode' : 'Edit tasks',
+            onPressed: _isEditMode ? _exitEditMode : _enterEditMode,
+          ),
+          IconButton(
+            icon: const Icon(Icons.archive_outlined),
+            tooltip: 'Archive',
+            onPressed: _navigateToArchive,
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'List options',
+            onSelected: (v) {
+              switch (v) {
+                case 'rename':
+                  _promptRenameList();
+                  break;
+                case 'color':
+                  _promptChangeColor();
+                  break;
+                case 'icon':
+                  _promptChangeIcon();
+                  break;
+                case 'appearance':
+                  _openAppearanceEditor();
+                  break;
+                case 'reset_appearance':
+                  _resetAppearance();
+                  break;
+                case 'sublist':
+                  _promptCreateSubList();
+                  break;
+                case 'reparent':
+                  _promptReparent();
+                  break;
+                case 'delete':
+                  _promptDeleteList();
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'rename',
+                child: ListTile(
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Rename'),
+                  contentPadding: EdgeInsets.zero,
                 ),
+              ),
+              const PopupMenuItem(
+                value: 'color',
+                child: ListTile(
+                  leading: Icon(Icons.color_lens_outlined),
+                  title: Text('Change icon color'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'icon',
+                child: ListTile(
+                  leading: Icon(Icons.emoji_emotions_outlined),
+                  title: Text('Change icon'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'appearance',
+                child: ListTile(
+                  leading: Icon(Icons.palette_outlined),
+                  title: Text('Customize theme'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              if (hasOverride)
+                const PopupMenuItem(
+                  value: 'reset_appearance',
+                  child: ListTile(
+                    leading: Icon(Icons.format_color_reset_outlined),
+                    title: Text('Reset theme'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'sublist',
+                child: ListTile(
+                  leading: Icon(Icons.create_new_folder_outlined),
+                  title: Text('Add sub-list'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'reparent',
+                child: ListTile(
+                  leading: Icon(Icons.drive_file_move_outlined),
+                  title: Text('Move list'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'delete',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline,
+                      color: theme.colorScheme.error),
+                  title: Text('Delete list',
+                      style: TextStyle(color: theme.colorScheme.error)),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: GestureDetector(
@@ -460,182 +953,207 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                   ),
                 )
               : null,
-          child: _todos.isEmpty && _completingTaskIds.isEmpty 
-              ? Center(
-                  child: Text(
-                    'Tap the text box below to add your first task.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.hintColor.withValues(alpha: 0.8),
-                      fontSize: 16,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : _isEditMode
-                  ? _buildEditModeListView() 
-                  : _buildNormalListView(),
+          child: Column(
+            children: [
+              _SubListStrip(
+                parentId: widget.list.id,
+                themeOverride: customTheme,
+                onTap: _navigateToSubList,
+                onAddSubList: _promptCreateSubList,
+              ),
+              Expanded(
+                child: _todos.isEmpty && _completingTaskIds.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Tap the text box below to add your first task.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.hintColor.withValues(alpha: 0.8),
+                            fontSize: 16,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : TaskListEditor(
+                        keyPrefix: 'list-${widget.list.id}',
+                        controller: TaskListEditorController(
+                          tasks: _todos,
+                          completingTaskIds: _completingTaskIds,
+                          isEditMode: _isEditMode,
+                          taskBeingEdited: _taskBeingEdited,
+                          editTextController: _editTextController,
+                          focusNode: _focusNode,
+                          onCompleteTask: _completeTask,
+                          onSetReminder: _showDateTimePicker,
+                          onClearReminder: _clearReminder,
+                          onReorder: _reorderTasks,
+                          onStartEditing: _startEditingTask,
+                          onSaveEdit: _saveTaskEdit,
+                          onCancelEdit: _cancelTaskEdit,
+                          onAnimationEnd: _onAnimationEnd,
+                          onLongPress: _promptMoveTask,
+                          themeOverride: hasOverride ? customTheme : null,
+                        ),
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
-      bottomSheet: _buildInputField(theme, customTheme),
+      bottomSheet: TaskInputField(
+        controller: _textController,
+        focusNode: _focusNode,
+        onSubmit: _addTodo,
+        customTheme: customTheme,
+      ),
     );
   }
+}
 
-  Widget _buildNormalListView() {
-    return ReorderableListView.builder(
-      padding: const EdgeInsets.only(bottom: 80), 
-      buildDefaultDragHandles: false,
-      itemCount: _todos.length,
-      itemBuilder: (context, index) {
-        if (index >= _todos.length) return const SizedBox.shrink();
-        
-        final task = _todos[index];
+/// Horizontal strip of a list's direct children, plus a trailing "+" tile to
+/// add another. Collapses to just the "+" tile when the parent has no kids
+/// so the strip never eats vertical space unnecessarily. Listens to
+/// SettingsNotifier directly so renames/adds/deletes refresh live.
+class _SubListStrip extends StatelessWidget {
+  final String parentId;
+  final void Function(TaskList) onTap;
+  final VoidCallback onAddSubList;
+  final CustomTheme? themeOverride;
 
-        if (_completingTaskIds.contains(task.id)) {
-          return AnimatingTodoItem(
-            key: ValueKey(task.id),
-            task: task,
-            hasReminder: task.reminderDateTime != null,
-            onAnimationEnd: () => _onAnimationEnd(task.id),
-          );
-        }
+  const _SubListStrip({
+    required this.parentId,
+    required this.onTap,
+    required this.onAddSubList,
+    this.themeOverride,
+  });
 
-        final isBeingEdited = _taskBeingEdited?.id == task.id;
+  @override
+  Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsNotifier>(context);
+    final theme = Theme.of(context);
+    final children = settings.childrenOf(parentId);
+    final customTheme = themeOverride ?? settings.currentTheme;
 
-        return TodoItem(
-          key: ValueKey(task.id),
-          task: task,
-          index: index,
-          onTapped: () => _completeTodo(index),
-          onSetReminder: () => _showDateTimePicker(task),
-          onClearReminder:
-              task.reminderDateTime != null ? () => _clearReminder(task) : null,
-          isEditMode: _isEditMode,
-          isBeingEdited: isBeingEdited,
-          onStartEditing: () => _startEditingTask(task),
-          onSaveEdit: _saveTaskEdit,
-          onCancelEdit: _cancelTaskEdit,
-          editTextController: _editTextController,
-          focusNode: _focusNode,
-        );
-      },
-      onReorderStart: (index) {
-        HapticFeedback.mediumImpact();
-      },
-      onReorder: (oldIndex, newIndex) {
-        HapticFeedback.lightImpact();
-        setState(() {
-          if (newIndex > oldIndex) newIndex -= 1;
-          final item = _todos.removeAt(oldIndex);
-          _todos.insert(newIndex, item);
-        });
-        _saveData();
-      },
-    );
-  }
-
-  Widget _buildEditModeListView() {
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 80),
-      itemCount: _todos.length,
-      itemBuilder: (context, index) {
-        if (index >= _todos.length) return const SizedBox.shrink();
-        
-        final task = _todos[index];
-
-        if (_completingTaskIds.contains(task.id)) {
-          return AnimatingTodoItem(
-            key: ValueKey(task.id),
-            task: task,
-            hasReminder: task.reminderDateTime != null,
-            onAnimationEnd: () => _onAnimationEnd(task.id),
-          );
-        }
-
-        final isBeingEdited = _taskBeingEdited?.id == task.id;
-
-        return TodoItem(
-          key: ValueKey(task.id),
-          task: task,
-          index: index,
-          onTapped: () {}, // Tap does nothing in edit mode unless editing starts
-          onSetReminder: () => _showDateTimePicker(task),
-          onClearReminder:
-              task.reminderDateTime != null ? () => _clearReminder(task) : null,
-          isEditMode: _isEditMode,
-          isBeingEdited: isBeingEdited,
-          onStartEditing: () => _startEditingTask(task),
-          onSaveEdit: _saveTaskEdit,
-          onCancelEdit: _cancelTaskEdit,
-          editTextController: _editTextController,
-          focusNode: _focusNode,
-        );
-      },
-    );
-  }
-
-  Widget _buildInputField(ThemeData theme, CustomTheme customTheme) {
-    final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    final double safeAreaBottom = MediaQuery.of(context).padding.bottom;
-    
-    const double verticalBuffer = 12.0;
-
-    final double bottomPadding = keyboardHeight > 0 
-        ? keyboardHeight + verticalBuffer 
-        : safeAreaBottom + verticalBuffer;
-
-    const double topPadding = verticalBuffer; 
-
-    return Material(
-      color: customTheme.inputAreaColor,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: topPadding, 
-          bottom: bottomPadding,
+    return Container(
+      height: 70,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: theme.dividerColor, width: 0.5),
         ),
-        child: TextField(
-          controller: _textController,
-          focusNode: _focusNode,
-          style: theme.textTheme.bodyMedium,
-          onSubmitted: (_) => _addTodo(),
-          decoration: InputDecoration(
-            hintText: 'Add a new task...',
-            
-            filled: true,
-            fillColor: theme.cardColor, 
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: children.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          if (index == children.length) {
+            return _SubListChip(
+              label: 'Add',
+              icon: const Icon(Icons.add, size: 18),
+              accent: customTheme.secondaryColor,
+              background: customTheme.taskBackgroundColor,
+              dashed: true,
+              onTap: onAddSubList,
+            );
+          }
+          final child = children[index];
+          final accent = child.color != null
+              ? Color(child.color!)
+              : customTheme.secondaryColor;
+          final count =
+              settings.activeTaskCountFor(child.id, deep: true);
+          return _SubListChip(
+            label: child.name,
+            icon: buildListIcon(
+              emoji: child.iconEmoji,
+              codePoint: child.iconCodePoint,
+              color: accent,
+              size: 18,
+            ),
+            accent: accent,
+            background: customTheme.taskBackgroundColor,
+            badgeCount: count,
+            onTap: () => onTap(child),
+          );
+        },
+      ),
+    );
+  }
+}
 
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 16,
-            ),
-            hintStyle: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.hintColor,
-            ),
+class _SubListChip extends StatelessWidget {
+  final String label;
+  final Widget icon;
+  final Color accent;
+  final Color background;
+  final int? badgeCount;
+  final bool dashed;
+  final VoidCallback onTap;
 
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(24), 
-              borderSide: BorderSide(
-                color: customTheme.secondaryColor, 
-                width: 1.0,
-              ),
+  const _SubListChip({
+    required this.label,
+    required this.icon,
+    required this.accent,
+    required this.background,
+    this.badgeCount,
+    this.dashed = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 90, maxWidth: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: accent.withValues(alpha: dashed ? 0.6 : 0.4),
+              width: dashed ? 1.2 : 1,
+              style: dashed ? BorderStyle.solid : BorderStyle.solid,
             ),
-            
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(24),
-              borderSide: BorderSide(
-                color: customTheme.secondaryColor, 
-                width: 2.0,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              icon,
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               ),
-            ),
-            
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(24), 
-              borderSide: BorderSide(
-                color: customTheme.secondaryColor,
-                width: 1.0,
-              ),
-            ),
+              if (badgeCount != null && badgeCount! > 0) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '$badgeCount',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: accent,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),

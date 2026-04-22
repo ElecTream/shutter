@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/settings_notifier.dart';
+import '../utils/haptics.dart';
 import 'delete_drop_zone.dart';
 import 'saved_colors_view.dart';
 
@@ -154,7 +155,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
           if (!savedColors.contains(currentColor) && savedColors.length < 10)
             TextButton(
               onPressed: () {
-                HapticFeedback.lightImpact();
+                Haptics.light();
                 widget.onAddSavedColor(currentColor);
               },
               child: const Text('Save Color'),
@@ -167,14 +168,14 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
             overlayColor: WidgetStateProperty.all(Colors.transparent),
           ),
           onPressed: () {
-            HapticFeedback.selectionClick();
+            Haptics.selection();
             setState(() => _isPaletteView = !_isPaletteView);
           },
           child: Text(_isPaletteView ? 'Color Picker' : 'My Colors'),
         ),
         TextButton(
           onPressed: () {
-            HapticFeedback.lightImpact();
+            Haptics.light();
             Navigator.of(context).pop(currentColor);
           },
           child: const Text('Done'),
@@ -225,7 +226,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
         SavedColorsView(
           key: const ValueKey('palette'),
           onColorSelected: (color) {
-            HapticFeedback.lightImpact();
+            Haptics.light();
             setState(() {
               _onColorChanged(HSVColor.fromColor(color)); // Update the color picker state
               _isPaletteView = false; // Switch back to picker view
@@ -236,7 +237,7 @@ class _AdvancedColorPickerState extends State<AdvancedColorPicker> {
         DeleteDropZone(
           isDragInProgress: _isDraggingInPalette,
           onColorDropped: (color) {
-            HapticFeedback.mediumImpact();
+            Haptics.medium();
             widget.onRemoveSavedColor(color);
             // This callback ensures the drag state is reset after deletion.
             _onPaletteDragUpdate(false);

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../utils/haptics.dart';
 import '../providers/settings_notifier.dart';
 
 class SavedColorsView extends StatefulWidget {
@@ -107,7 +107,7 @@ class _SavedColorsViewState extends State<SavedColorsView> {
                   
                   final oldIndex = _localColors.indexOf(_draggedColor!);
                   if (oldIndex != -1 && oldIndex != newIndex) {
-                    HapticFeedback.selectionClick();
+                    Haptics.selection();
                     setState(() {
                       // STEP 1: Update the LOCAL LIST in real-time to drive the animation.
                       final item = _localColors.removeAt(oldIndex);
@@ -132,12 +132,12 @@ class _SavedColorsViewState extends State<SavedColorsView> {
       dragAnchorStrategy: pointerDragAnchorStrategy,
       feedbackOffset: const Offset(0, 0),
       onDragStarted: () {
-        HapticFeedback.mediumImpact();
+        Haptics.medium();
         setState(() => _draggedColor = color);
         widget.onDragUpdate(true);
       },
       onDragUpdate: (details) {
-        HapticFeedback.selectionClick();
+        Haptics.selection();
       },
       onDragEnd: (details) {
         // --- FIX: Only update the color order if the drop was NOT accepted ---
