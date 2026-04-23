@@ -4,7 +4,10 @@
       "Bash(flutter devices *)",
       "Bash(flutter doctor *)",
       "Bash(flutter analyze *)",
-      "Bash(flutter test *)"
+      "Bash(flutter test *)",
+      "Bash(where blip *)",
+      "Bash(blip --version)",
+      "Bash(blip --help)"
     ]
   }
 }

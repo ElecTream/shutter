@@ -107,3 +107,13 @@ foreach ($src in $map.Keys) {
 
 Write-Host ""
 Write-Host "Done. shutter-$next.apk in $releases" -ForegroundColor Green
+
+# --- Push to phone ---
+$targetApk = Join-Path $releases "shutter-$next.apk"
+if (Test-Path $targetApk) {
+    Write-Host "Pushing $(Split-Path $targetApk -Leaf) to phone..." -ForegroundColor Cyan
+    & push-apk $targetApk
+    if ($LASTEXITCODE -ne 0) { Write-Warning "push-apk exit $LASTEXITCODE (build ok)" }
+} else {
+    Write-Warning "No APK at $targetApk; skipping push."
+}
