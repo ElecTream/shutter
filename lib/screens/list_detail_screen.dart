@@ -17,7 +17,7 @@ import '../widgets/advanced_color_picker.dart';
 import '../widgets/icon_picker_sheet.dart';
 import '../widgets/move_to_sheet.dart';
 import '../widgets/preset_picker_sheet.dart';
-import '../widgets/repeat_picker_sheet.dart';
+import '../widgets/reminder_sheet.dart';
 import '../widgets/task_list_editor.dart';
 import 'archive_screen.dart';
 import 'theme_editor_screen.dart';
@@ -234,63 +234,20 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     await _notificationService.requestPermission();
     if (!mounted) return;
 
-    final now = DateTime.now();
-    final DateTime? pickedDate = await showDatePicker(
-      context: context,
-      initialDate: task.reminderDateTime ?? now,
-      firstDate: now,
-      lastDate: DateTime(2101),
-    );
-
-    if (pickedDate == null || !mounted) return;
-
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    TimeOfDay initialTime;
-
-    if (pickedDate.year == now.year &&
-        pickedDate.month == now.month &&
-        pickedDate.day == now.day) {
-      initialTime = TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1)));
-    } else if (task.reminderDateTime != null) {
-      initialTime = TimeOfDay.fromDateTime(task.reminderDateTime!);
-    } else {
-      initialTime = settings.defaultReminderTime;
-    }
-
-    if (!mounted) return;
-    final TimeOfDay? pickedTime = await showTimePicker(
-      context: context,
-      initialTime: initialTime,
+    final result = await showReminderSheet(
+      context,
+      initial: task.reminderDateTime,
+      initialRepeat: task.repeat,
+      defaultTime: settings.defaultReminderTime,
     );
+    if (result == null || !mounted) return;
 
-    if (pickedTime == null) return;
-
-    final newReminderDateTime = DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    );
-
-    if (newReminderDateTime.isBefore(DateTime.now())) {
+    if (result.cleared) {
+      await _handleTaskReminder(task, null);
       return;
     }
-
-    if (!mounted) return;
-    // Offer a Repeats step so one-shot stays the default (Never) but users
-    // who want a recurring reminder can pick a cadence in the same flow.
-    final repeatResult = await showRepeatPickerSheet(
-      context,
-      current: task.repeat,
-    );
-    if (!mounted) return;
-    // Dismissal preserves whatever the task already had; explicit pick wins.
-    final RepeatInterval? chosenRepeat =
-        repeatResult == null ? task.repeat : repeatResult.interval;
-
-    Haptics.light();
-    await _handleTaskReminder(task, newReminderDateTime, repeat: chosenRepeat);
+    await _handleTaskReminder(task, result.when, repeat: result.repeat);
   }
 
   void _clearReminder(Task task) async {

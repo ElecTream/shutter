@@ -12,7 +12,7 @@ import '../providers/settings_notifier.dart';
 import '../services/notification_service.dart';
 import '../widgets/icon_picker_sheet.dart';
 import '../widgets/move_to_sheet.dart';
-import '../widgets/repeat_picker_sheet.dart';
+import '../widgets/reminder_sheet.dart';
 import '../widgets/task_list_editor.dart';
 import 'archive_screen.dart';
 import 'list_detail_screen.dart';
@@ -210,45 +210,20 @@ class _TodoScreenState extends State<TodoScreen>
     await _notificationService.requestPermission();
     if (!mounted) return;
 
-    final now = DateTime.now();
-    final pickedDate = await showDatePicker(
-      context: context,
-      initialDate: task.reminderDateTime ?? now,
-      firstDate: now,
-      lastDate: DateTime(2101),
-    );
-    if (pickedDate == null || !mounted) return;
-
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    final TimeOfDay initialTime;
-    if (pickedDate.year == now.year &&
-        pickedDate.month == now.month &&
-        pickedDate.day == now.day) {
-      initialTime = TimeOfDay.fromDateTime(now.add(const Duration(minutes: 1)));
-    } else if (task.reminderDateTime != null) {
-      initialTime = TimeOfDay.fromDateTime(task.reminderDateTime!);
-    } else {
-      initialTime = settings.defaultReminderTime;
+    final result = await showReminderSheet(
+      context,
+      initial: task.reminderDateTime,
+      initialRepeat: task.repeat,
+      defaultTime: settings.defaultReminderTime,
+    );
+    if (result == null || !mounted) return;
+
+    if (result.cleared) {
+      await _handleRootReminder(task, null);
+      return;
     }
-
-    if (!mounted) return;
-    final pickedTime =
-        await showTimePicker(context: context, initialTime: initialTime);
-    if (pickedTime == null) return;
-
-    final newDt = DateTime(pickedDate.year, pickedDate.month, pickedDate.day,
-        pickedTime.hour, pickedTime.minute);
-    if (newDt.isBefore(DateTime.now())) return;
-
-    if (!mounted) return;
-    final repeatResult =
-        await showRepeatPickerSheet(context, current: task.repeat);
-    if (!mounted) return;
-    final RepeatInterval? chosenRepeat =
-        repeatResult == null ? task.repeat : repeatResult.interval;
-
-    Haptics.light();
-    await _handleRootReminder(task, newDt, repeat: chosenRepeat);
+    await _handleRootReminder(task, result.when, repeat: result.repeat);
   }
 
   void _clearRootReminder(Task task) async {
