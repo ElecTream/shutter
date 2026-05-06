@@ -34,6 +34,13 @@ class SettingsNotifier extends ChangeNotifier {
   final List<Task> _rootTasks = [];
   final List<ArchivedTask> _rootArchive = [];
 
+  // Per-list state caches. Lazy-populated by loadListIfNeeded(listId); the
+  // root container loads eagerly because the home screen renders it always.
+  // _listsLoaded gates lazy initialization so repeat loads no-op.
+  final Map<String, List<Task>> _listTasks = {};
+  final Map<String, List<ArchivedTask>> _listArchive = {};
+  final Set<String> _listsLoaded = <String>{};
+
   // Home-screen section state (collapsible Tasks + Lists groups).
   bool _tasksGroupExpanded = true;
   bool _listsGroupExpanded = true;
@@ -192,6 +199,10 @@ class SettingsNotifier extends ChangeNotifier {
   bool get tasksGroupFirst => _tasksGroupFirst;
 
   void _loadSettings() {
+    // Reset per-list caches so import/wipe re-reads fresh state on next access.
+    _listTasks.clear();
+    _listArchive.clear();
+    _listsLoaded.clear();
     _themeMode = ThemeMode.values[_prefs.getInt('themeMode') ?? ThemeMode.system.index];
     _archiveClearDuration = ArchiveClearDuration.values[_prefs.getInt('archiveClearDuration') ?? ArchiveClearDuration.oneWeek.index];
     _taskHeight = _prefs.getDouble('taskHeight') ?? 1.0;
@@ -297,24 +308,24 @@ class SettingsNotifier extends ChangeNotifier {
 
   // --- Root task CRUD -------------------------------------------------------
 
-  void addRootTask(Task task) {
+  Future<void> addRootTask(Task task) async {
     _rootTasks.insert(0, task);
-    _saveRootTasks();
+    await _saveRootTasks();
   }
 
-  void updateRootTask(Task task) {
+  Future<void> updateRootTask(Task task) async {
     final i = _rootTasks.indexWhere((t) => t.id == task.id);
     if (i == -1) return;
     _rootTasks[i] = task;
-    _saveRootTasks();
+    await _saveRootTasks();
   }
 
-  void reorderRootTasks(int oldIndex, int newIndex) {
+  Future<void> reorderRootTasks(int oldIndex, int newIndex) async {
     if (oldIndex < 0 || oldIndex >= _rootTasks.length) return;
     if (newIndex > oldIndex) newIndex -= 1;
     final t = _rootTasks.removeAt(oldIndex);
     _rootTasks.insert(newIndex.clamp(0, _rootTasks.length), t);
-    _saveRootTasks();
+    await _saveRootTasks();
   }
 
   // Inserts an archive entry for the given task without touching the active list.
@@ -322,7 +333,7 @@ class SettingsNotifier extends ChangeNotifier {
   // snapshot on tap, then removes the active task when the animation ends.
   // Dedupes against an identical-text entry archived within the last 5s to
   // guard against racing with the background-isolate "Mark Complete" path.
-  void archiveRootSnapshot(Task task) {
+  Future<void> archiveRootSnapshot(Task task) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final already = _rootArchive.any((a) =>
         a.text == task.text && (nowMs - a.archivedAtTimestamp).abs() < 5000);
@@ -335,27 +346,27 @@ class SettingsNotifier extends ChangeNotifier {
         originNameSnapshot: 'Root',
       ),
     );
-    _saveRootArchive();
+    await _saveRootArchive();
   }
 
-  void removeRootTask(String taskId) {
+  Future<void> removeRootTask(String taskId) async {
     final before = _rootTasks.length;
     _rootTasks.removeWhere((t) => t.id == taskId);
-    if (_rootTasks.length != before) _saveRootTasks();
+    if (_rootTasks.length != before) await _saveRootTasks();
   }
 
-  void restoreRootArchivedTask(ArchivedTask entry) {
+  Future<void> restoreRootArchivedTask(ArchivedTask entry) async {
     final removed = _rootArchive.remove(entry);
     if (!removed) return;
     _rootTasks.add(Task.createNew(text: entry.text));
-    _saveRootTasks();
-    _saveRootArchive();
+    await _saveRootTasks();
+    await _saveRootArchive();
   }
 
-  void clearRootArchive() {
+  Future<void> clearRootArchive() async {
     if (_rootArchive.isEmpty) return;
     _rootArchive.clear();
-    _saveRootArchive();
+    await _saveRootArchive();
   }
 
   // Reloads root state from SharedPreferences. Used when the background isolate
@@ -366,6 +377,163 @@ class SettingsNotifier extends ChangeNotifier {
     _loadRootTasks();
     _loadRootArchive();
     notifyListeners();
+  }
+
+  // --- Per-list task state --------------------------------------------------
+
+  /// Unmodifiable view of a list's active tasks. Returns empty if the list
+  /// hasn't been loaded yet — call [loadListIfNeeded] first (in initState).
+  List<Task> tasksFor(String listId) =>
+      List.unmodifiable(_listTasks[listId] ?? const <Task>[]);
+
+  /// Unmodifiable view of a list's archive. Returns empty if not yet loaded.
+  List<ArchivedTask> archiveFor(String listId) =>
+      List.unmodifiable(_listArchive[listId] ?? const <ArchivedTask>[]);
+
+  bool isListLoaded(String listId) => _listsLoaded.contains(listId);
+
+  /// Lazy-loads a list's tasks + archive into the in-memory cache. Idempotent.
+  /// Prunes the archive per the current archive-clear policy and persists the
+  /// pruned form so the prune is durable.
+  Future<void> loadListIfNeeded(String listId) async {
+    if (_listsLoaded.contains(listId)) return;
+    final tasksRaw = _prefs.getStringList('todos_$listId') ?? const <String>[];
+    final archiveRaw =
+        _prefs.getStringList('archivedTodos_$listId') ?? const <String>[];
+    final tasks = tasksRaw
+        .map((s) => Task.fromJson(jsonDecode(s) as Map<String, dynamic>))
+        .toList();
+    final archive = archiveRaw
+        .map((s) => ArchivedTask.fromJson(jsonDecode(s) as Map<String, dynamic>))
+        .toList();
+    final originalArchiveLen = archive.length;
+    _pruneArchive(archive);
+    _listTasks[listId] = tasks;
+    _listArchive[listId] = archive;
+    _listsLoaded.add(listId);
+    if (archive.length != originalArchiveLen) {
+      await _saveListArchive(listId);
+    }
+    notifyListeners();
+  }
+
+  Future<void> _saveListTasks(String listId) async {
+    final tasks = _listTasks[listId] ?? const <Task>[];
+    await _prefs.setStringList(
+        'todos_$listId', tasks.map((t) => jsonEncode(t.toJson())).toList());
+    notifyListeners();
+  }
+
+  Future<void> _saveListArchive(String listId) async {
+    final archive = _listArchive[listId] ?? const <ArchivedTask>[];
+    await _prefs.setStringList('archivedTodos_$listId',
+        archive.map((t) => jsonEncode(t.toJson())).toList());
+    notifyListeners();
+  }
+
+  /// Reloads a list's tasks + archive from disk after the bg isolate has
+  /// written via SharedPreferences (Mark Complete from a killed app). Calls
+  /// _prefs.reload() first so the cached prefs read sees the bg write.
+  Future<void> reloadListFromDisk(String listId) async {
+    await _prefs.reload();
+    final tasksRaw = _prefs.getStringList('todos_$listId') ?? const <String>[];
+    final archiveRaw =
+        _prefs.getStringList('archivedTodos_$listId') ?? const <String>[];
+    _listTasks[listId] = tasksRaw
+        .map((s) => Task.fromJson(jsonDecode(s) as Map<String, dynamic>))
+        .toList();
+    final archive = archiveRaw
+        .map((s) => ArchivedTask.fromJson(jsonDecode(s) as Map<String, dynamic>))
+        .toList();
+    _pruneArchive(archive);
+    _listArchive[listId] = archive;
+    _listsLoaded.add(listId);
+    notifyListeners();
+  }
+
+  Future<void> addListTask(String listId, Task task) async {
+    final tasks = _listTasks.putIfAbsent(listId, () => []);
+    tasks.insert(0, task);
+    _listsLoaded.add(listId);
+    await _saveListTasks(listId);
+  }
+
+  Future<void> updateListTask(String listId, Task task) async {
+    final tasks = _listTasks[listId];
+    if (tasks == null) return;
+    final i = tasks.indexWhere((t) => t.id == task.id);
+    if (i == -1) return;
+    tasks[i] = task;
+    await _saveListTasks(listId);
+  }
+
+  Future<void> removeListTask(String listId, String taskId) async {
+    final tasks = _listTasks[listId];
+    if (tasks == null) return;
+    final before = tasks.length;
+    tasks.removeWhere((t) => t.id == taskId);
+    if (tasks.length != before) await _saveListTasks(listId);
+  }
+
+  Future<void> reorderListTasks(
+      String listId, int oldIndex, int newIndex) async {
+    final tasks = _listTasks[listId];
+    if (tasks == null) return;
+    if (oldIndex < 0 || oldIndex >= tasks.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    final t = tasks.removeAt(oldIndex);
+    tasks.insert(newIndex.clamp(0, tasks.length), t);
+    await _saveListTasks(listId);
+  }
+
+  /// Inserts an archive entry for [task] in [list] without touching the active
+  /// list. Paired with [removeListTask] for the completion animation flow.
+  /// Dedupes against a same-text entry archived within the last 5s to guard
+  /// against racing with the background-isolate Mark Complete path.
+  Future<void> archiveListSnapshot(TaskList list, Task task) async {
+    final archive = _listArchive.putIfAbsent(list.id, () => []);
+    _listsLoaded.add(list.id);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final already = archive.any((a) =>
+        a.text == task.text && (nowMs - a.archivedAtTimestamp).abs() < 5000);
+    if (already) return;
+    archive.insert(
+      0,
+      ArchivedTask.createNew(
+        text: task.text,
+        originId: list.id,
+        originNameSnapshot: list.name,
+        originColorSnapshot: list.color,
+      ),
+    );
+    await _saveListArchive(list.id);
+  }
+
+  Future<void> restoreListArchivedTask(
+      String listId, ArchivedTask entry) async {
+    final archive = _listArchive[listId];
+    if (archive == null) return;
+    final removed = archive.remove(entry);
+    if (!removed) return;
+    final tasks = _listTasks.putIfAbsent(listId, () => []);
+    tasks.add(Task.createNew(text: entry.text));
+    await _saveListTasks(listId);
+    await _saveListArchive(listId);
+  }
+
+  Future<void> clearListArchive(String listId) async {
+    final archive = _listArchive[listId];
+    if (archive == null || archive.isEmpty) return;
+    archive.clear();
+    await _saveListArchive(listId);
+  }
+
+  Future<void> pruneListArchive(String listId) async {
+    final archive = _listArchive[listId];
+    if (archive == null || archive.isEmpty) return;
+    final before = archive.length;
+    _pruneArchive(archive);
+    if (archive.length != before) await _saveListArchive(listId);
   }
 
   // --- Section toggles ------------------------------------------------------
@@ -397,7 +565,7 @@ class SettingsNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addTaskList(TaskList list) {
+  Future<void> addTaskList(TaskList list) async {
     // Assign sortOrder at the tail so new lists appear after existing ones.
     final maxOrder = _taskLists.isEmpty
         ? -1
@@ -406,14 +574,14 @@ class SettingsNotifier extends ChangeNotifier {
             .reduce((a, b) => a > b ? a : b);
     final positioned = list.copyWith(sortOrder: maxOrder + 1);
     _taskLists.add(positioned);
-    _saveTaskLists();
+    await _saveTaskLists();
   }
 
-  void updateTaskList(TaskList list) {
+  Future<void> updateTaskList(TaskList list) async {
     final index = _taskLists.indexWhere((t) => t.id == list.id);
     if (index != -1) {
       _taskLists[index] = list;
-      _saveTaskLists();
+      await _saveTaskLists();
     }
   }
 
@@ -421,7 +589,8 @@ class SettingsNotifier extends ChangeNotifier {
   /// top-level lists; a list UUID targets that list's direct children.
   /// Rewrites each sibling's sortOrder so gaps and duplicates from earlier
   /// bugs/migrations heal on every reorder.
-  void reorderListsWithin(String? parentId, int oldIndex, int newIndex) {
+  Future<void> reorderListsWithin(
+      String? parentId, int oldIndex, int newIndex) async {
     final siblings = childrenOf(parentId);
     if (oldIndex < 0 || oldIndex >= siblings.length) return;
     if (newIndex > oldIndex) newIndex -= 1;
@@ -432,7 +601,7 @@ class SettingsNotifier extends ChangeNotifier {
       final idx = _taskLists.indexWhere((l) => l.id == siblings[i].id);
       if (idx != -1) _taskLists[idx] = _taskLists[idx].copyWith(sortOrder: i);
     }
-    _saveTaskLists();
+    await _saveTaskLists();
   }
 
   Future<void> deleteTaskList(String listId) async {
@@ -443,6 +612,10 @@ class SettingsNotifier extends ChangeNotifier {
     _taskLists.removeWhere((t) => t.id == listId);
     await _saveTaskLists();
     await _prefs.remove('todos_$listId');
+    _listTasks.remove(listId);
+    _listsLoaded.remove(listId);
+    // _listArchive cache retained intentionally — mirrors the disk policy of
+    // keeping archivedTodos_$listId so global archive can render provenance.
   }
 
   // --- Nested lists --------------------------------------------------------
@@ -498,7 +671,7 @@ class SettingsNotifier extends ChangeNotifier {
   /// Moves `listId` under `newParentId` (null = top-level). Rejects moves that
   /// would create a cycle (into own subtree) or orphan the list. Resets the
   /// list's sortOrder to the tail of the new parent to avoid collisions.
-  void reparentList(String listId, String? newParentId) {
+  Future<void> reparentList(String listId, String? newParentId) async {
     if (listId == newParentId) return;
     final idx = _taskLists.indexWhere((l) => l.id == listId);
     if (idx == -1) return;
@@ -519,7 +692,7 @@ class SettingsNotifier extends ChangeNotifier {
 
     _taskLists[idx] = _taskLists[idx]
         .copyWith(parentId: newParentId, sortOrder: tail);
-    _saveTaskLists();
+    await _saveTaskLists();
   }
 
   /// Moves `task` from one container to another. `fromContainerId` /
@@ -570,6 +743,12 @@ class SettingsNotifier extends ChangeNotifier {
 
     if (fromContainerId == 'root' || toContainerId == 'root') {
       _loadRootTasks();
+    }
+    if (fromContainerId != 'root' && _listsLoaded.contains(fromContainerId)) {
+      await reloadListFromDisk(fromContainerId);
+    }
+    if (toContainerId != 'root' && _listsLoaded.contains(toContainerId)) {
+      await reloadListFromDisk(toContainerId);
     }
     notifyListeners();
   }
@@ -640,6 +819,14 @@ class SettingsNotifier extends ChangeNotifier {
       _loadRootTasks();
       _loadRootArchive();
     }
+    if (entry.originId != 'root' && _listsLoaded.contains(entry.originId)) {
+      await reloadListFromDisk(entry.originId);
+    }
+    if (targetContainerId != 'root' &&
+        targetContainerId != entry.originId &&
+        _listsLoaded.contains(targetContainerId)) {
+      await reloadListFromDisk(targetContainerId);
+    }
     notifyListeners();
   }
 
@@ -652,6 +839,9 @@ class SettingsNotifier extends ChangeNotifier {
       await _prefs.remove(key);
     }
     _rootArchive.clear();
+    for (final entry in _listArchive.entries) {
+      entry.value.clear();
+    }
     notifyListeners();
   }
 
@@ -664,6 +854,8 @@ class SettingsNotifier extends ChangeNotifier {
     await _saveTaskLists();
     for (final id in ids) {
       await _prefs.remove('todos_$id');
+      _listTasks.remove(id);
+      _listsLoaded.remove(id);
     }
   }
   
@@ -690,7 +882,9 @@ class SettingsNotifier extends ChangeNotifier {
   }
 
   Future<void> _saveThemes() async {
-    final themesToSave = _themes.where((t) => t.isDeletable || t.id != 'default').toList();
+    // Default theme is always re-seeded by _createDefaultThemes on startup,
+    // so persisting it would just be disk churn.
+    final themesToSave = _themes.where((t) => t.id != 'default').toList();
     final themesJson = jsonEncode(themesToSave.map((theme) => theme.toJson()).toList());
     await _prefs.setString('customThemes', themesJson);
     notifyListeners();
@@ -702,31 +896,31 @@ class SettingsNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addTheme(CustomTheme theme) {
+  Future<void> addTheme(CustomTheme theme) async {
     _themes.add(theme);
-    _saveThemes();
+    await _saveThemes();
   }
 
-  void updateTheme(CustomTheme theme) {
+  Future<void> updateTheme(CustomTheme theme) async {
     final index = _themes.indexWhere((t) => t.id == theme.id);
     if (index != -1) {
       _themes[index] = theme;
       if (_currentTheme.id == theme.id) {
         _currentTheme = theme;
       }
-      _saveThemes();
+      await _saveThemes();
     }
   }
 
-  void deleteTheme(String themeId) {
+  Future<void> deleteTheme(String themeId) async {
     final themeToDelete = _themes.firstWhere((t) => t.id == themeId);
     if (_themes.length <= 1 || !themeToDelete.isDeletable) return;
-    
+
     _themes.removeWhere((t) => t.id == themeId);
     if (_currentTheme.id == themeId) {
       setCurrentTheme(_themes.first.id);
     }
-    _saveThemes();
+    await _saveThemes();
   }
   
   void setThemeMode(ThemeMode mode) {
@@ -786,11 +980,11 @@ class SettingsNotifier extends ChangeNotifier {
 
   /// Writes a full theme override onto a list. Pass null to clear back to the
   /// global theme.
-  void updateListTheme(String listId, CustomTheme? override) {
+  Future<void> updateListTheme(String listId, CustomTheme? override) async {
     final idx = _taskLists.indexWhere((l) => l.id == listId);
     if (idx == -1) return;
     _taskLists[idx] = _taskLists[idx].copyWith(themeOverride: override);
-    _saveTaskLists();
+    await _saveTaskLists();
   }
   
   void addSavedColor(Color color) {

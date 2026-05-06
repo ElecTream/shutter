@@ -315,12 +315,24 @@ class NotificationService {
   /// Called when the app is in the foreground and user taps the notification
   /// body (not an action button). Action buttons with showsUserInterface:false
   /// always route to notificationTapBackground regardless of app state.
+  ///
+  /// Body taps emit a `tap: 'true'` event over [taskCompletedStream] so the
+  /// always-alive home screen can navigate to the task's list. The event
+  /// shares the stream because the existing port is already wired and we don't
+  /// need a separate channel.
   void _onForegroundResponse(NotificationResponse r) {
     if (r.payload == null) return;
+    if (r.actionId != null) return; // action buttons handled by bg path
     try {
-      json.decode(r.payload!);
-      // Notification body tap while foreground — complete if user tapped body
-      if (r.actionId == null) return;
+      final decoded = json.decode(r.payload!) as Map<String, dynamic>;
+      final taskId = decoded['id'] as String?;
+      final listId = decoded['listId'] as String?;
+      if (taskId == null || listId == null) return;
+      _completedStream.add({
+        'taskId': taskId,
+        'listId': listId,
+        'tap': 'true',
+      });
     } catch (e) {
       debugPrint('_onForegroundResponse payload error: $e');
     }

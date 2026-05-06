@@ -1,10 +1,8 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../utils/haptics.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import 'dart:io';
 
 import '../models/archived_task.dart';
 import '../models/custom_theme.dart';
@@ -14,6 +12,7 @@ import '../models/list.dart';
 import '../providers/settings_notifier.dart';
 import '../services/notification_service.dart';
 import '../utils/app_themes.dart';
+import '../utils/haptics.dart';
 import '../widgets/advanced_color_picker.dart';
 import '../widgets/icon_picker_sheet.dart';
 import '../widgets/move_to_sheet.dart';
@@ -39,10 +38,9 @@ class ListDetailScreen extends StatefulWidget {
 
 class _ListDetailScreenState extends State<ListDetailScreen>
     with WidgetsBindingObserver {
-  final List<Task> _todos = [];
-  final List<ArchivedTask> _archivedTodos = [];
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  // Local UI-only state. Persistent task data lives in SettingsNotifier.
   final Set<String> _completingTaskIds = <String>{};
 
   // --- EDIT MODE STATE ---
@@ -51,40 +49,35 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   final TextEditingController _editTextController = TextEditingController();
 
   final NotificationService _notificationService = NotificationService();
-  // FIX: Change stream subscription type to Map<String, String>
   StreamSubscription<Map<String, String>>? _completionSubscription;
-  
-  // Persistence keys based on List ID
-  late String _todosKey;
-  late String _archivedTodosKey;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _todosKey = 'todos_${widget.list.id}';
-    _archivedTodosKey = 'archivedTodos_${widget.list.id}';
-    _loadData();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.loadListIfNeeded(widget.list.id);
+    settings.pruneListArchive(widget.list.id);
     _initializeNotifications();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Resume-only handling: covers the killed-app case where the bg isolate
+    // wrote prefs while we were not running. paused/detached are uninteresting
+    // because the foreground holds no mutable state outside the notifier.
     if (state == AppLifecycleState.resumed) {
-      // Covers the killed-app case: background handler wrote to SharedPreferences,
-      // reload pulls the updated state now that we're back in foreground.
-      _loadData();
+      final settings = Provider.of<SettingsNotifier>(context, listen: false);
+      settings.reloadListFromDisk(widget.list.id);
     }
   }
-  
+
   @override
   void didUpdateWidget(covariant ListDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Important: Update persistence keys if the list ID changes (though it shouldn't for this screen)
     if (widget.list.id != oldWidget.list.id) {
-      _todosKey = 'todos_${widget.list.id}';
-      _archivedTodosKey = 'archivedTodos_${widget.list.id}';
-      _loadData();
+      final settings = Provider.of<SettingsNotifier>(context, listen: false);
+      settings.loadListIfNeeded(widget.list.id);
     }
     // Listen for name changes to update the screen title immediately
     if (widget.list.name != oldWidget.list.name) {
@@ -95,17 +88,24 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   Future<void> _initializeNotifications() async {
     try {
       await _notificationService.init();
-      // FIX: Update listener to expect and handle Map<String, String>
       _completionSubscription =
           _notificationService.taskCompletedStream.listen((data) {
-        // Recurring completions advanced the reminder in the bg isolate;
-        // the fg just needs to pick up the updated task row from disk —
-        // archiving would be wrong.
-        if (data['recurring'] == 'true') {
-          if (data['listId'] == widget.list.id) _loadData();
-          return;
+        // Body-tap routing is handled by TodoScreen (the always-alive root);
+        // we only consume completion events for the list we're showing.
+        if (data['tap'] == 'true') return;
+        if (data['listId'] != widget.list.id) return;
+        // Recurring or one-shot — either way the bg isolate has already
+        // mutated prefs. Pulling fresh state covers both paths and defeats the
+        // bg/fg race that previously clobbered other tasks on save.
+        if (!mounted) return;
+        final settings =
+            Provider.of<SettingsNotifier>(context, listen: false);
+        settings.reloadListFromDisk(widget.list.id);
+        // Drive the strike-through animation if the task is still active.
+        final taskId = data['taskId'];
+        if (taskId != null) {
+          setState(() => _completingTaskIds.add(taskId));
         }
-        _completeTaskFromNotification(data['taskId']!, data['listId']!);
       });
     } catch (e) {
       debugPrint('Failed to init notifications: $e');
@@ -122,82 +122,24 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    if (!mounted) return;
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    final prefs = await SharedPreferences.getInstance();
-
-    // Use list-specific keys
-    final todosData = prefs.getStringList(_todosKey) ?? [];
-    final archivedData = prefs.getStringList(_archivedTodosKey) ?? [];
-
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final List<ArchivedTask> loadedArchived = archivedData
-        .map((jsonData) => ArchivedTask.fromJson(json.decode(jsonData)))
-        .toList();
-
-    bool archiveWasModified = false;
-    final archiveClearDuration = settings.archiveClearDuration;
-    if (archiveClearDuration != ArchiveClearDuration.never) {
-      final durationMap = {
-        ArchiveClearDuration.oneDay: const Duration(days: 1),
-        ArchiveClearDuration.threeDays: const Duration(days: 3),
-        ArchiveClearDuration.oneWeek: const Duration(days: 7),
-      };
-
-      final clearThreshold =
-          now - (durationMap[archiveClearDuration]?.inMilliseconds ?? 0);
-      final originalCount = loadedArchived.length;
-      loadedArchived
-          .removeWhere((task) => task.archivedAtTimestamp < clearThreshold);
-      archiveWasModified = originalCount != loadedArchived.length;
-    }
-
-    setState(() {
-      _todos.clear();
-      _archivedTodos.clear();
-      _todos.addAll(todosData.map(
-          (jsonString) => Task.fromJson(json.decode(jsonString))));
-      _archivedTodos.addAll(loadedArchived);
-    });
-
-    if (archiveWasModified) {
-      _saveData();
-    }
-  }
-
-  Future<void> _saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final List<String> todosJson =
-        _todos.map((task) => json.encode(task.toJson())).toList();
-    await prefs.setStringList(_todosKey, todosJson);
-    final List<String> archivedJson = _archivedTodos
-        .map((task) => json.encode(task.toJson()))
-        .toList();
-    await prefs.setStringList(_archivedTodosKey, archivedJson);
-  }
-
   void _addTodo() {
     if (_textController.text.trim().isNotEmpty) {
       Haptics.light();
-      setState(() {
-        _todos.insert(
-            0, Task.createNew(text: _textController.text.trim()));
-      });
+      final settings = Provider.of<SettingsNotifier>(context, listen: false);
+      settings.addListTask(
+        widget.list.id,
+        Task.createNew(text: _textController.text.trim()),
+      );
       _textController.clear();
-      _saveData();
       _focusNode.requestFocus();
     }
   }
 
   void _onAnimationEnd(String taskId) {
-    if (mounted) {
-      setState(() {
-        _todos.removeWhere((task) => task.id == taskId);
-        _completingTaskIds.remove(taskId);
-      });
-      _saveData();
-    }
+    if (!mounted) return;
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.removeListTask(widget.list.id, taskId);
+    setState(() => _completingTaskIds.remove(taskId));
   }
 
   /// Called when user taps a task tile.
@@ -225,19 +167,11 @@ class _ListDetailScreenState extends State<ListDetailScreen>
           NotificationService.generateNotificationId(task.id));
     }
 
-    final newArchivedTask = ArchivedTask.createNew(
-      text: task.text,
-      originId: widget.list.id,
-      originNameSnapshot: widget.list.name,
-      originColorSnapshot: widget.list.color,
-    );
-
-    setState(() {
-      _completingTaskIds.add(task.id);
-      _archivedTodos.insert(0, newArchivedTask);
-    });
-
-    _saveData();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    setState(() => _completingTaskIds.add(task.id));
+    settings.archiveListSnapshot(widget.list, task);
+    // The active task is removed in _onAnimationEnd once the strike-through
+    // finishes — keeps the row visible for the duration of the animation.
   }
 
   Future<void> _promptMoveTask(Task task) async {
@@ -253,55 +187,16 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       fromContainerId: widget.list.id,
       toContainerId: picked,
     );
-    if (mounted) await _loadData();
   }
 
   void _reorderTasks(int oldIndex, int newIndex) {
-    setState(() {
-      final item = _todos.removeAt(oldIndex);
-      _todos.insert(newIndex, item);
-    });
-    _saveData();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.reorderListTasks(widget.list.id, oldIndex, newIndex);
   }
 
-  // FIX: Updated to handle both taskId and listId, and only complete if the task belongs to this list
-	void _completeTaskFromNotification(String taskId, String listId) {
-    // Only proceed if the notification is for the currently viewed list
-    if (listId != widget.list.id) return;
-    
-	  final index = _todos.indexWhere((task) => task.id == taskId);
-	  if (index != -1 && mounted) {
-		final taskToComplete = _todos[index];
-
-		if (_completingTaskIds.contains(taskToComplete.id)) return;
-
-		final newArchivedTask = ArchivedTask.createNew(
-		  text: taskToComplete.text,
-		  originId: widget.list.id,
-		  originNameSnapshot: widget.list.name,
-		  originColorSnapshot: widget.list.color,
-		);
-
-		setState(() {
-		  _completingTaskIds.add(taskToComplete.id);
-		  _archivedTodos.insert(0, newArchivedTask);
-		});
-
-		if (taskToComplete.reminderDateTime != null) {
-		  _notificationService.cancelNotification(
-			  NotificationService.generateNotificationId(taskToComplete.id));
-		}
-	  }
-	}
-
   void _updateTask(Task updatedTask) {
-    final index = _todos.indexWhere((task) => task.id == updatedTask.id);
-    if (index != -1) {
-      setState(() {
-        _todos[index] = updatedTask;
-      });
-      _saveData();
-    }
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.updateListTask(widget.list.id, updatedTask);
   }
 
   Future<void> _handleTaskReminder(
@@ -407,19 +302,14 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
   void _restoreTodo(ArchivedTask restoredTask) {
     Haptics.light();
-    setState(() {
-      _archivedTodos.remove(restoredTask);
-      _todos.add(Task.createNew(text: restoredTask.text));
-    });
-    _saveData();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.restoreListArchivedTask(widget.list.id, restoredTask);
   }
 
   void _clearArchive() {
     Haptics.medium();
-    setState(() {
-      _archivedTodos.clear();
-    });
-    _saveData();
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    settings.clearListArchive(widget.list.id);
   }
 
   // --- EDIT MODE FUNCTIONS ---
@@ -483,10 +373,11 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     _focusNode.unfocus();
     await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
 
     Navigator.of(context).push(MaterialPageRoute(
         builder: (context) => ArchiveScreen(
-              archivedTodos: _archivedTodos,
+              archivedTodos: settings.archiveFor(widget.list.id),
               onRestore: (task) => _restoreTodo(task),
               onClear: _clearArchive,
             )));
@@ -962,7 +853,8 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                 onAddSubList: _promptCreateSubList,
               ),
               Expanded(
-                child: _todos.isEmpty && _completingTaskIds.isEmpty
+                child: settings.tasksFor(widget.list.id).isEmpty &&
+                        _completingTaskIds.isEmpty
                     ? Center(
                         child: Text(
                           'Tap the text box below to add your first task.',
@@ -976,7 +868,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                     : TaskListEditor(
                         keyPrefix: 'list-${widget.list.id}',
                         controller: TaskListEditorController(
-                          tasks: _todos,
+                          tasks: settings.tasksFor(widget.list.id),
                           completingTaskIds: _completingTaskIds,
                           isEditMode: _isEditMode,
                           taskBeingEdited: _taskBeingEdited,

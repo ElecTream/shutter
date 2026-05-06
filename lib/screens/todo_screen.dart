@@ -67,6 +67,12 @@ class _TodoScreenState extends State<TodoScreen>
       _completionSubscription =
           _notificationService.taskCompletedStream.listen((data) {
         if (!mounted) return;
+        // Body-tap routing: pop to home, then push the target list if it isn't
+        // the root. Detail screens listen for non-tap events themselves.
+        if (data['tap'] == 'true') {
+          _routeForegroundTap(data['listId']);
+          return;
+        }
         if (data['listId'] == 'root') {
           Provider.of<SettingsNotifier>(context, listen: false)
               .reloadRootFromDisk();
@@ -75,6 +81,19 @@ class _TodoScreenState extends State<TodoScreen>
     } catch (e) {
       debugPrint('Failed to init notifications on home: $e');
     }
+  }
+
+  void _routeForegroundTap(String? listId) {
+    if (listId == null) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    if (listId == 'root') return;
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final idx = settings.taskLists.indexWhere((l) => l.id == listId);
+    if (idx == -1) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+          builder: (_) => ListDetailScreen(list: settings.taskLists[idx])),
+    );
   }
 
   @override
