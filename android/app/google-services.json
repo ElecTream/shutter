@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "640349210361",
+    "firebase_url": "https://shutter-elec-default-rtdb.firebaseio.com",
     "project_id": "shutter-elec",
     "storage_bucket": "shutter-elec.firebasestorage.app"
   },
@@ -12,7 +13,12 @@
           "package_name": "com.electream.shutter"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "640349210361-rai08dso2ujdd32n1po990sl9oh2svps.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDLvMIcewTUHCHqRsCyRCLOJenI56ATyW4"
@@ -20,7 +26,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "640349210361-rai08dso2ujdd32n1po990sl9oh2svps.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

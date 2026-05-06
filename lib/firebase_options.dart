@@ -54,6 +54,7 @@ class DefaultFirebaseOptions {
     appId: '1:640349210361:android:5ab6f9e5ef687089ed0428',
     messagingSenderId: '640349210361',
     projectId: 'shutter-elec',
+    databaseURL: 'https://shutter-elec-default-rtdb.firebaseio.com',
     storageBucket: 'shutter-elec.firebasestorage.app',
   );
 
@@ -63,6 +64,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '640349210361',
     projectId: 'shutter-elec',
     authDomain: 'shutter-elec.firebaseapp.com',
+    databaseURL: 'https://shutter-elec-default-rtdb.firebaseio.com',
     storageBucket: 'shutter-elec.firebasestorage.app',
   );
+
 }
