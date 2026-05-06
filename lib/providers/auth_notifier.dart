@@ -23,6 +23,7 @@ class AuthNotifier extends ChangeNotifier {
   String? get email => _auth.email;
   String? get displayName => _auth.displayName;
   String? get photoUrl => _auth.photoUrl;
+  String? get firebaseUid => _auth.firebaseUid;
   AuthService get service => _auth;
 
   Future<bool> signIn() async {

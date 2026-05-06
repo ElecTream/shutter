@@ -83,15 +83,47 @@ class SettingsNotifier extends ChangeNotifier {
   // unset so migration retries on next launch.
   void _runMigrations() {
     final version = _prefs.getInt('migrationVersion') ?? 0;
-    if (version >= 3) return;
+    if (version >= 4) return;
 
     try {
       _runV1Migration(version);
       _runV2Migration(version);
       _runV3Migration(version);
-      _prefs.setInt('migrationVersion', 3);
+      _runV4Migration(version);
+      _prefs.setInt('migrationVersion', 4);
     } catch (e) {
       debugPrint('SettingsNotifier migration failed: $e');
+    }
+  }
+
+  // Additive: stamp `storage = local` on every existing list. The model
+  // defaults to local on decode for missing fields, but writing it back
+  // makes the persisted shape stable and lets a future migration assume
+  // the field is always present.
+  void _runV4Migration(int fromVersion) {
+    if (fromVersion >= 4) return;
+    final listsJson = _prefs.getString('taskLists');
+    if (listsJson == null) return;
+    try {
+      final decoded = jsonDecode(listsJson) as List;
+      bool changed = false;
+      for (int i = 0; i < decoded.length; i++) {
+        final map = Map<String, dynamic>.from(decoded[i] as Map);
+        if (!map.containsKey('storage')) {
+          map['storage'] = ListStorage.local.name;
+          changed = true;
+        }
+        if (!map.containsKey('collaboratorUids')) {
+          map['collaboratorUids'] = const <String>[];
+          changed = true;
+        }
+        decoded[i] = map;
+      }
+      if (changed) {
+        _prefs.setString('taskLists', jsonEncode(decoded));
+      }
+    } catch (_) {
+      // Tolerate corruption — fromJson defaults handle it at read time.
     }
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +24,17 @@ void main() async {
   } catch (e) {
     debugPrint(
         'Notification service init failed, continuing without notifications: $e');
+  }
+
+  // Firebase init is optional — without flutterfire configure / a present
+  // google-services.json, this throws and we fall back to local + Drive only.
+  // FirestoreListService and the FirebaseAuth bridge guard on Firebase.apps
+  // before doing anything, so silent failure is safe.
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    debugPrint(
+        'Firebase init skipped (Firestore features disabled until flutterfire configure runs): $e');
   }
 
   final settingsNotifier = SettingsNotifier(prefs);

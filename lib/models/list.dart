@@ -7,6 +7,29 @@ class _Unset {
 }
 const _unset = _Unset();
 
+/// Where a list's task data lives.
+///
+/// `local` — SharedPreferences only. No cloud component.
+/// `drive` — Drive-backed JSON in the user's own Drive (Phase 2 + 2.1 sync).
+/// `firestore` — owner-shared list in Firestore. Realtime, multi-collaborator.
+///
+/// Local and drive are interchangeable for write semantics; the difference is
+/// whether the orchestrator pushes/pulls. Firestore is the only branch that
+/// fundamentally changes how the screen reads + writes data.
+enum ListStorage {
+  local,
+  drive,
+  firestore;
+
+  static ListStorage fromName(String? name) {
+    if (name == null) return ListStorage.local;
+    for (final v in ListStorage.values) {
+      if (v.name == name) return v;
+    }
+    return ListStorage.local;
+  }
+}
+
 // Represents a named list of tasks. Lists can nest via parentId (null = top-level).
 class TaskList {
   final String id;
@@ -21,6 +44,15 @@ class TaskList {
   // Last-write-wins timestamp consumed by the sync layer. Every copyWith
   // advances it. Backfilled from createdAtTimestamp by migration v3.
   final int updatedAt;
+  // Where this list's data is stored. Defaults to local; flips to firestore
+  // when the list is shared. See [ListStorage].
+  final ListStorage storage;
+  // Firebase UID of the list's owner — only meaningful when storage is
+  // firestore. Null otherwise.
+  final String? ownerUid;
+  // Firebase UIDs of collaborators (excluding owner). Only meaningful for
+  // firestore-backed lists. Mutated by sharing/kick flows in Phase 4.
+  final List<String> collaboratorUids;
 
   TaskList({
     required this.id,
@@ -33,7 +65,12 @@ class TaskList {
     this.sortOrder = 0,
     this.themeOverride,
     int? updatedAt,
-  }) : updatedAt = updatedAt ?? createdAtTimestamp;
+    this.storage = ListStorage.local,
+    this.ownerUid,
+    List<String>? collaboratorUids,
+  })  : updatedAt = updatedAt ?? createdAtTimestamp,
+        collaboratorUids =
+            List.unmodifiable(collaboratorUids ?? const <String>[]);
 
   factory TaskList.createNew({
     required String name,
@@ -70,6 +107,9 @@ class TaskList {
         'sortOrder': sortOrder,
         'themeOverride': themeOverride?.toJson(),
         'updatedAt': updatedAt,
+        'storage': storage.name,
+        'ownerUid': ownerUid,
+        'collaboratorUids': collaboratorUids,
       };
 
   factory TaskList.fromJson(Map<String, dynamic> json) {
@@ -79,6 +119,10 @@ class TaskList {
       override = CustomTheme.fromJson(Map<String, dynamic>.from(themeJson));
     }
     final created = json['createdAtTimestamp'] as int;
+    final collabRaw = json['collaboratorUids'];
+    final collab = collabRaw is List
+        ? collabRaw.map((e) => e.toString()).toList(growable: false)
+        : const <String>[];
     return TaskList(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -90,6 +134,9 @@ class TaskList {
       sortOrder: (json['sortOrder'] as int?) ?? 0,
       themeOverride: override,
       updatedAt: (json['updatedAt'] as int?) ?? created,
+      storage: ListStorage.fromName(json['storage'] as String?),
+      ownerUid: json['ownerUid'] as String?,
+      collaboratorUids: collab,
     );
   }
 
@@ -102,6 +149,9 @@ class TaskList {
     int? sortOrder,
     Object? themeOverride = _unset,
     int? updatedAt,
+    ListStorage? storage,
+    Object? ownerUid = _unset,
+    List<String>? collaboratorUids,
   }) {
     return TaskList(
       id: id,
@@ -118,6 +168,10 @@ class TaskList {
           ? this.themeOverride
           : themeOverride as CustomTheme?,
       updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
+      storage: storage ?? this.storage,
+      ownerUid:
+          identical(ownerUid, _unset) ? this.ownerUid : ownerUid as String?,
+      collaboratorUids: collaboratorUids ?? this.collaboratorUids,
     );
   }
 }
