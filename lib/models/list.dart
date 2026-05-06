@@ -18,6 +18,9 @@ class TaskList {
   String? iconCodePoint; // Material icon codepoint stored as string.
   int sortOrder;         // Ordering within the same parent.
   CustomTheme? themeOverride; // null = inherit global theme.
+  // Last-write-wins timestamp consumed by the sync layer. Every copyWith
+  // advances it. Backfilled from createdAtTimestamp by migration v3.
+  final int updatedAt;
 
   TaskList({
     required this.id,
@@ -29,7 +32,8 @@ class TaskList {
     this.iconCodePoint,
     this.sortOrder = 0,
     this.themeOverride,
-  });
+    int? updatedAt,
+  }) : updatedAt = updatedAt ?? createdAtTimestamp;
 
   factory TaskList.createNew({
     required String name,
@@ -40,16 +44,18 @@ class TaskList {
     int sortOrder = 0,
     CustomTheme? themeOverride,
   }) {
+    final now = DateTime.now().millisecondsSinceEpoch;
     return TaskList(
       id: const Uuid().v4(),
       name: name,
-      createdAtTimestamp: DateTime.now().millisecondsSinceEpoch,
+      createdAtTimestamp: now,
       parentId: parentId,
       color: color,
       iconEmoji: iconEmoji,
       iconCodePoint: iconCodePoint,
       sortOrder: sortOrder,
       themeOverride: themeOverride,
+      updatedAt: now,
     );
   }
 
@@ -63,6 +69,7 @@ class TaskList {
         'iconCodePoint': iconCodePoint,
         'sortOrder': sortOrder,
         'themeOverride': themeOverride?.toJson(),
+        'updatedAt': updatedAt,
       };
 
   factory TaskList.fromJson(Map<String, dynamic> json) {
@@ -71,16 +78,18 @@ class TaskList {
     if (themeJson is Map) {
       override = CustomTheme.fromJson(Map<String, dynamic>.from(themeJson));
     }
+    final created = json['createdAtTimestamp'] as int;
     return TaskList(
       id: json['id'] as String,
       name: json['name'] as String,
-      createdAtTimestamp: json['createdAtTimestamp'] as int,
+      createdAtTimestamp: created,
       parentId: json['parentId'] as String?,
       color: json['color'] as int?,
       iconEmoji: json['iconEmoji'] as String?,
       iconCodePoint: json['iconCodePoint'] as String?,
       sortOrder: (json['sortOrder'] as int?) ?? 0,
       themeOverride: override,
+      updatedAt: (json['updatedAt'] as int?) ?? created,
     );
   }
 
@@ -92,6 +101,7 @@ class TaskList {
     Object? iconCodePoint = _unset,
     int? sortOrder,
     Object? themeOverride = _unset,
+    int? updatedAt,
   }) {
     return TaskList(
       id: id,
@@ -107,6 +117,7 @@ class TaskList {
       themeOverride: identical(themeOverride, _unset)
           ? this.themeOverride
           : themeOverride as CustomTheme?,
+      updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
     );
   }
 }

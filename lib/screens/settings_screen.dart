@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/custom_theme.dart';
+import '../providers/auth_notifier.dart';
 import '../providers/settings_notifier.dart';
+import '../services/sync_orchestrator.dart';
 import '../utils/app_info.dart';
 import '../utils/haptics.dart';
 import '../widgets/preset_picker_sheet.dart';
@@ -36,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _BehaviorCard(settings: settings, accent: accent),
             const SizedBox(height: 12),
             _ThemesCard(settings: settings, accent: accent),
+            const SizedBox(height: 12),
+            _AccountCard(accent: accent),
             const SizedBox(height: 12),
             _DataCard(settings: settings, accent: accent),
             const SizedBox(height: 12),
@@ -521,6 +525,165 @@ class _Swatch extends StatelessWidget {
         border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
       ),
     );
+  }
+}
+
+class _AccountCard extends StatefulWidget {
+  final Color accent;
+  const _AccountCard({required this.accent});
+
+  @override
+  State<_AccountCard> createState() => _AccountCardState();
+}
+
+class _AccountCardState extends State<_AccountCard> {
+  bool _syncing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final auth = context.watch<AuthNotifier>();
+    final orchestrator = context.read<SyncOrchestrator>();
+    final accent = widget.accent;
+
+    return _SectionCard(
+      title: 'Sync & backup',
+      children: [
+        if (!auth.signedIn)
+          ListTile(
+            leading: Icon(Icons.cloud_outlined, color: accent),
+            title: const Text('Sign in with Google'),
+            subtitle: Text(
+              'Backs up personal lists to your own Drive. Optional — the app works offline.',
+              style: theme.textTheme.bodySmall,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _signIn(auth),
+          )
+        else ...[
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: accent.withValues(alpha: 0.2),
+              foregroundColor: accent,
+              backgroundImage:
+                  auth.photoUrl != null ? NetworkImage(auth.photoUrl!) : null,
+              child: auth.photoUrl == null
+                  ? Text(_initials(auth.displayName ?? auth.email ?? '?'))
+                  : null,
+            ),
+            title: Text(auth.displayName ?? auth.email ?? 'Signed in'),
+            subtitle: auth.email != null
+                ? Text(auth.email!, style: theme.textTheme.bodySmall)
+                : null,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: _syncing
+                ? SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: accent,
+                    ),
+                  )
+                : Icon(Icons.sync, color: accent),
+            title: Text(_syncing ? 'Syncing…' : 'Sync now'),
+            subtitle: Text(
+              'Push the latest local state to your Drive.',
+              style: theme.textTheme.bodySmall,
+            ),
+            onTap: _syncing ? null : () => _syncNow(orchestrator),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Icons.logout, color: theme.colorScheme.error),
+            title: Text(
+              'Sign out',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+            subtitle: Text(
+              'Stops sync. Local data is kept.',
+              style: theme.textTheme.bodySmall,
+            ),
+            onTap: () => _signOut(auth),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _signIn(AuthNotifier auth) async {
+    Haptics.selection();
+    final ok = await auth.signIn();
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Sign-in failed. Check Cloud Console OAuth setup or try again.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _syncNow(SyncOrchestrator orchestrator) async {
+    Haptics.selection();
+    setState(() => _syncing = true);
+    try {
+      await orchestrator.syncNow();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Synced to Drive'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sync failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  Future<void> _signOut(AuthNotifier auth) async {
+    Haptics.selection();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text(
+          'Local lists, tasks, and settings stay on this device. Drive backup will stop until you sign in again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await auth.signOut();
+  }
+
+  String _initials(String s) {
+    final trimmed = s.trim();
+    if (trimmed.isEmpty) return '?';
+    final parts = trimmed.split(RegExp(r'\s+|@'));
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
   }
 }
 

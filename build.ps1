@@ -66,6 +66,25 @@ if (-not $NoBump) {
     Set-Content -Path $pubspec -Value $updated -NoNewline:$false
 }
 
+# --- Sync lib/utils/app_info.dart ---
+# AppInfo.version is what the in-app Settings screen renders. Keep it in lock-
+# step with pubspec so users always see the version they're actually running.
+$appInfo = Join-Path $PSScriptRoot 'lib/utils/app_info.dart'
+if (Test-Path $appInfo) {
+    $infoContent = Get-Content $appInfo -Raw
+    $patched = [regex]::Replace(
+        $infoContent,
+        "(static const String version = ')[^']*(';)",
+        "`${1}$next`$2"
+    )
+    if ($patched -ne $infoContent) {
+        Set-Content -Path $appInfo -Value $patched -NoNewline:$false
+        Write-Host "  app_info.dart -> $next" -ForegroundColor DarkGray
+    }
+} else {
+    Write-Warning "app_info.dart not found; in-app version will drift."
+}
+
 # --- Prepare output dirs ---
 $releases = Join-Path $PSScriptRoot 'releases'
 $archive  = Join-Path $releases 'archive'

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +8,11 @@ import '../models/custom_theme.dart';
 import '../models/list.dart';
 import '../models/task.dart';
 import '../utils/haptics.dart';
+
+/// Sentinel container id emitted on `dirtyContainers` when the task-list
+/// metadata changes (rename, reparent, color/icon edits, reorder). Sync
+/// orchestrator pushes a fresh manifest in response.
+const String kManifestDirtyKey = '__manifest__';
 
 enum ArchiveClearDuration { oneDay, threeDays, oneWeek, never }
 
@@ -41,6 +47,17 @@ class SettingsNotifier extends ChangeNotifier {
   final Map<String, List<ArchivedTask>> _listArchive = {};
   final Set<String> _listsLoaded = <String>{};
 
+  // Broadcasts containerIds (e.g. 'root', a list UUID, or kManifestDirtyKey)
+  // whose persisted state just changed. The Drive sync orchestrator subscribes
+  // and debounces. Broadcast so multiple subscribers can listen safely.
+  final StreamController<String> _dirtyController =
+      StreamController<String>.broadcast();
+  Stream<String> get dirtyContainers => _dirtyController.stream;
+
+  void _markDirty(String key) {
+    if (!_dirtyController.isClosed) _dirtyController.add(key);
+  }
+
   // Home-screen section state (collapsible Tasks + Lists groups).
   bool _tasksGroupExpanded = true;
   bool _listsGroupExpanded = true;
@@ -57,14 +74,72 @@ class SettingsNotifier extends ChangeNotifier {
   // unset so migration retries on next launch.
   void _runMigrations() {
     final version = _prefs.getInt('migrationVersion') ?? 0;
-    if (version >= 2) return;
+    if (version >= 3) return;
 
     try {
       _runV1Migration(version);
       _runV2Migration(version);
-      _prefs.setInt('migrationVersion', 2);
+      _runV3Migration(version);
+      _prefs.setInt('migrationVersion', 3);
     } catch (e) {
       debugPrint('SettingsNotifier migration failed: $e');
+    }
+  }
+
+  // Additive: backfill `updatedAt` onto every persisted Task / TaskList so the
+  // sync layer has a stable freshness signal. Lists default to their
+  // createdAtTimestamp; tasks default to "now" because they had no creation
+  // stamp before v3. No schema transforms — every key is rewritten with the
+  // same shape plus the new field.
+  void _runV3Migration(int fromVersion) {
+    if (fromVersion >= 3) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    // Backfill task lists.
+    final listsJson = _prefs.getString('taskLists');
+    if (listsJson != null) {
+      try {
+        final decoded = jsonDecode(listsJson) as List;
+        bool changed = false;
+        for (int i = 0; i < decoded.length; i++) {
+          final map = Map<String, dynamic>.from(decoded[i] as Map);
+          if (!map.containsKey('updatedAt')) {
+            map['updatedAt'] =
+                map['createdAtTimestamp'] as int? ?? nowMs;
+            changed = true;
+          }
+          decoded[i] = map;
+        }
+        if (changed) {
+          _prefs.setString('taskLists', jsonEncode(decoded));
+        }
+      } catch (_) {
+        // Tolerate corruption — fromJson defaults handle it at read time.
+      }
+    }
+
+    // Backfill task records under every todos_* key.
+    for (final key in _prefs.getKeys().toList()) {
+      if (!key.startsWith('todos_')) continue;
+      final raw = _prefs.getStringList(key);
+      if (raw == null) continue;
+      bool changed = false;
+      final rebuilt = <String>[];
+      for (final entryJson in raw) {
+        try {
+          final map = Map<String, dynamic>.from(jsonDecode(entryJson) as Map);
+          if (!map.containsKey('updatedAt')) {
+            map['updatedAt'] = nowMs;
+            changed = true;
+          }
+          rebuilt.add(jsonEncode(map));
+        } catch (_) {
+          rebuilt.add(entryJson);
+        }
+      }
+      if (changed) {
+        _prefs.setStringList(key, rebuilt);
+      }
     }
   }
 
@@ -297,12 +372,14 @@ class SettingsNotifier extends ChangeNotifier {
   Future<void> _saveRootTasks() async {
     final data = _rootTasks.map((t) => jsonEncode(t.toJson())).toList();
     await _prefs.setStringList('todos_root', data);
+    _markDirty('root');
     notifyListeners();
   }
 
   Future<void> _saveRootArchive() async {
     final data = _rootArchive.map((t) => jsonEncode(t.toJson())).toList();
     await _prefs.setStringList('archivedTodos_root', data);
+    _markDirty('root');
     notifyListeners();
   }
 
@@ -421,6 +498,7 @@ class SettingsNotifier extends ChangeNotifier {
     final tasks = _listTasks[listId] ?? const <Task>[];
     await _prefs.setStringList(
         'todos_$listId', tasks.map((t) => jsonEncode(t.toJson())).toList());
+    _markDirty(listId);
     notifyListeners();
   }
 
@@ -428,6 +506,7 @@ class SettingsNotifier extends ChangeNotifier {
     final archive = _listArchive[listId] ?? const <ArchivedTask>[];
     await _prefs.setStringList('archivedTodos_$listId',
         archive.map((t) => jsonEncode(t.toJson())).toList());
+    _markDirty(listId);
     notifyListeners();
   }
 
@@ -562,6 +641,7 @@ class SettingsNotifier extends ChangeNotifier {
   Future<void> _saveTaskLists() async {
     final listsJson = jsonEncode(_taskLists.map((list) => list.toJson()).toList());
     await _prefs.setString('taskLists', listsJson);
+    _markDirty(kManifestDirtyKey);
     notifyListeners();
   }
 
@@ -614,6 +694,7 @@ class SettingsNotifier extends ChangeNotifier {
     await _prefs.remove('todos_$listId');
     _listTasks.remove(listId);
     _listsLoaded.remove(listId);
+    _markDirty(listId);
     // _listArchive cache retained intentionally — mirrors the disk policy of
     // keeping archivedTodos_$listId so global archive can render provenance.
   }
@@ -750,6 +831,8 @@ class SettingsNotifier extends ChangeNotifier {
     if (toContainerId != 'root' && _listsLoaded.contains(toContainerId)) {
       await reloadListFromDisk(toContainerId);
     }
+    _markDirty(fromContainerId);
+    _markDirty(toContainerId);
     notifyListeners();
   }
 
@@ -827,6 +910,8 @@ class SettingsNotifier extends ChangeNotifier {
         _listsLoaded.contains(targetContainerId)) {
       await reloadListFromDisk(targetContainerId);
     }
+    _markDirty(entry.originId);
+    if (targetContainerId != entry.originId) _markDirty(targetContainerId);
     notifyListeners();
   }
 
@@ -837,6 +922,7 @@ class SettingsNotifier extends ChangeNotifier {
         _prefs.getKeys().where((k) => k.startsWith('archivedTodos_')).toList();
     for (final key in keys) {
       await _prefs.remove(key);
+      _markDirty(key.substring('archivedTodos_'.length));
     }
     _rootArchive.clear();
     for (final entry in _listArchive.entries) {
@@ -856,6 +942,7 @@ class SettingsNotifier extends ChangeNotifier {
       await _prefs.remove('todos_$id');
       _listTasks.remove(id);
       _listsLoaded.remove(id);
+      _markDirty(id);
     }
   }
   
@@ -1119,5 +1206,11 @@ class SettingsNotifier extends ChangeNotifier {
     for (final key in dynamicKeys) {
       await _prefs.remove(key);
     }
+  }
+
+  @override
+  void dispose() {
+    _dirtyController.close();
+    super.dispose();
   }
 }

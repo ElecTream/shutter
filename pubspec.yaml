@@ -3,7 +3,7 @@ description: A simple daily planner app.
 
 publish_to: 'none'
 
-version: 2.2.4
+version: 2.2.5
 environment:
   sdk: '>=3.1.0 <4.0.0'
 
@@ -20,6 +20,11 @@ dependencies:
   intl: ^0.19.0
   flutter_local_notifications: ^19.5.0
   timezone: ^0.10.1
+  google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  googleapis_auth: ^1.6.0
+  extension_google_sign_in_as_googleapis_auth: ^2.0.12
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
@@ -47,6 +52,7 @@ flutter_native_splash:
   android_12:
     color: "#121212"
     image: assets/icon/icon.png
+
 
 
 

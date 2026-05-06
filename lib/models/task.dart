@@ -8,13 +8,15 @@ class Task {
   final String text;
   final DateTime? reminderDateTime;
   final RepeatInterval? repeat; // null = one-shot reminder.
+  final int updatedAt;
 
   Task({
     required this.id,
     required this.text,
     this.reminderDateTime,
     this.repeat,
-  });
+    int? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now().millisecondsSinceEpoch;
 
   factory Task.createNew({required String text}) {
     return Task(id: const Uuid().v4(), text: text);
@@ -25,6 +27,7 @@ class Task {
         'text': text,
         'reminderDateTime': reminderDateTime?.millisecondsSinceEpoch,
         'repeat': repeat?.name,
+        'updatedAt': updatedAt,
       };
 
   factory Task.fromJson(Map<String, dynamic> json) => Task(
@@ -34,22 +37,29 @@ class Task {
             ? DateTime.fromMillisecondsSinceEpoch(json['reminderDateTime'] as int)
             : null,
         repeat: RepeatInterval.fromName(json['repeat'] as String?),
+        updatedAt: (json['updatedAt'] as int?) ??
+            DateTime.now().millisecondsSinceEpoch,
       );
 
   // NOTE: reminderDateTime and repeat are intentionally used-as-passed (not
   // ??-defaulted), so callers can clear them by passing null. This matches the
   // existing contract for reminderDateTime; callers that want to preserve
   // either value must pass it explicitly.
+  //
+  // updatedAt advances to now on every copyWith — every mutation re-stamps so
+  // the sync layer can reason about freshness.
   Task copyWith({
     String? text,
     DateTime? reminderDateTime,
     RepeatInterval? repeat,
+    int? updatedAt,
   }) {
     return Task(
       id: id,
       text: text ?? this.text,
       reminderDateTime: reminderDateTime,
       repeat: repeat,
+      updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
     );
   }
 }
