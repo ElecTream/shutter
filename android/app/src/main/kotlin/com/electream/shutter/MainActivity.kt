@@ -1,4 +1,4 @@
-package com.example.shutter
+package com.electream.shutter
 
 import android.os.Build
 import android.os.Bundle
@@ -8,7 +8,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
-    private val CHANNEL = "com.example.shutter/timezone"
+    private val CHANNEL = "com.electream.shutter/timezone"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

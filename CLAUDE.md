@@ -42,7 +42,7 @@ Any new persisted field must be read/written in `SettingsNotifier` to survive re
 - **"Mark Complete" action runs in a separate isolate** when the app is killed/backgrounded (`notificationTapBackground()`).
 - Background → foreground bridge: `IsolateNameServer` + `ReceivePort`. Background handler writes SharedPreferences directly, then posts an event to the named port if the foreground is alive.
 - Foreground listens via `taskCompletedStream`; `SettingsNotifier` subscribes and refreshes UI.
-- Timezone resolved once at startup via `MethodChannel('com.example.shutter/timezone')` → `android/app/src/main/kotlin/com/example/shutter/MainActivity.kt`.
+- Timezone resolved once at startup via `MethodChannel('com.electream.shutter/timezone')` → `android/app/src/main/kotlin/com/electream/shutter/MainActivity.kt`.
 - Init is wrapped in try/catch in `main.dart`; failures degrade gracefully.
 
 **When editing notifications, test BOTH code paths**: foreground tap (app open) and background tap (app killed). They diverge.

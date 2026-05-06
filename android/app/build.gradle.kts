@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.shutter"
+    namespace = "com.electream.shutter"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.shutter"
+        applicationId = "com.electream.shutter"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
