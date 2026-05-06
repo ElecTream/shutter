@@ -1,34 +1,34 @@
 {
   "project_info": {
-    "project_number": "640349210361",
-    "firebase_url": "https://shutter-elec-default-rtdb.firebaseio.com",
-    "project_id": "shutter-elec",
-    "storage_bucket": "shutter-elec.firebasestorage.app"
+    "project_number": "671517421234",
+    "firebase_url": "https://shutter-495518-default-rtdb.firebaseio.com",
+    "project_id": "shutter-495518",
+    "storage_bucket": "shutter-495518.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:640349210361:android:5ab6f9e5ef687089ed0428",
+        "mobilesdk_app_id": "1:671517421234:android:19c27d608b70174b1de3ab",
         "android_client_info": {
           "package_name": "com.electream.shutter"
         }
       },
       "oauth_client": [
         {
-          "client_id": "640349210361-rai08dso2ujdd32n1po990sl9oh2svps.apps.googleusercontent.com",
+          "client_id": "671517421234-jk7e2dsodb6bg96nqv9a7r6vj9bgl17d.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDLvMIcewTUHCHqRsCyRCLOJenI56ATyW4"
+          "current_key": "AIzaSyC509lfPSVE7cld6BkURueLH3dSB7zE4eY"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "640349210361-rai08dso2ujdd32n1po990sl9oh2svps.apps.googleusercontent.com",
+              "client_id": "671517421234-i8jo1130l29qdnaka2nev6ejhkpb2282.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
