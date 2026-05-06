@@ -187,9 +187,16 @@ class SyncOrchestrator {
       }
       await _settings.applyRemoteManifest(remoteLists);
 
-      // Container merge — root + every list now in the manifest.
+      // Container merge — root + every list now in the manifest. Skip
+      // Firestore-backed lists; their data lives entirely on Firestore.
       final ids = <String>['root', ...remoteLists.map((l) => l.id)];
       for (final id in ids) {
+        if (id != 'root') {
+          final list = _settings.taskListById(id);
+          if (list != null && list.storage == ListStorage.firestore) {
+            continue;
+          }
+        }
         await _pullContainer(id);
       }
     } catch (e) {
@@ -242,6 +249,10 @@ class SyncOrchestrator {
       await _drive.deleteContainer(id);
       return;
     }
+    // Firestore-backed lists live entirely on Firestore; their Drive copy was
+    // removed by the migrator on share. Skip pushing so we don't recreate it.
+    final list = _settings.taskListById(id);
+    if (list != null && list.storage == ListStorage.firestore) return;
     await _settings.loadListIfNeeded(id);
     final body = <String, dynamic>{
       'schema': 1,

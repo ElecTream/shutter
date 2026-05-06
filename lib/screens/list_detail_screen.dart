@@ -10,6 +10,8 @@ import '../models/repeat_interval.dart';
 import '../models/task.dart';
 import '../models/list.dart';
 import '../providers/settings_notifier.dart';
+import '../services/container_actions.dart';
+import '../services/firestore_list_service.dart';
 import '../services/notification_service.dart';
 import '../utils/app_themes.dart';
 import '../utils/haptics.dart';
@@ -49,16 +51,70 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   final TextEditingController _editTextController = TextEditingController();
 
   final NotificationService _notificationService = NotificationService();
+  final FirestoreListService _firestore = FirestoreListService();
   StreamSubscription<Map<String, String>>? _completionSubscription;
+  StreamSubscription<List<Task>>? _firestoreTasksSub;
+  StreamSubscription<List<ArchivedTask>>? _firestoreArchiveSub;
+
+  late ContainerActions _actions;
+
+  bool get _isFirestore =>
+      // Resolve from latest settings copy so a Drive→Firestore migration
+      // mid-session swaps over without re-pushing the screen.
+      _liveList?.storage == ListStorage.firestore;
+
+  TaskList? get _liveList {
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    return settings.taskListById(widget.list.id) ?? widget.list;
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    _actions = ContainerActions(settings);
     settings.loadListIfNeeded(widget.list.id);
     settings.pruneListArchive(widget.list.id);
     _initializeNotifications();
+    _subscribeToFirestoreIfNeeded();
+  }
+
+  void _subscribeToFirestoreIfNeeded() {
+    final list = _liveList;
+    if (list == null || list.storage != ListStorage.firestore) return;
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+
+    // Mirror Firestore stream into the local cache so the existing screen
+    // bindings (settings.tasksFor / archiveFor) keep working unchanged. The
+    // beginRemoteApply guard suppresses dirty-emit during the write so the
+    // Drive orchestrator doesn't try to push back to a list that no longer
+    // belongs there.
+    _firestoreTasksSub = _firestore.streamTasks(widget.list.id).listen((tasks) {
+      settings.beginRemoteApply();
+      try {
+        settings.applyRemoteContainer(
+          widget.list.id,
+          tasks: tasks,
+          archive: settings.archiveFor(widget.list.id),
+        );
+      } finally {
+        settings.endRemoteApply();
+      }
+    });
+    _firestoreArchiveSub =
+        _firestore.streamArchive(widget.list.id).listen((archive) {
+      settings.beginRemoteApply();
+      try {
+        settings.applyRemoteContainer(
+          widget.list.id,
+          tasks: settings.tasksFor(widget.list.id),
+          archive: archive,
+        );
+      } finally {
+        settings.endRemoteApply();
+      }
+    });
   }
 
   @override
@@ -119,15 +175,17 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     _focusNode.dispose();
     _editTextController.dispose();
     _completionSubscription?.cancel();
+    _firestoreTasksSub?.cancel();
+    _firestoreArchiveSub?.cancel();
     super.dispose();
   }
 
   void _addTodo() {
     if (_textController.text.trim().isNotEmpty) {
       Haptics.light();
-      final settings = Provider.of<SettingsNotifier>(context, listen: false);
-      settings.addListTask(
-        widget.list.id,
+      final list = _liveList ?? widget.list;
+      _actions.addTask(
+        list,
         Task.createNew(text: _textController.text.trim()),
       );
       _textController.clear();
@@ -137,8 +195,8 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
   void _onAnimationEnd(String taskId) {
     if (!mounted) return;
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    settings.removeListTask(widget.list.id, taskId);
+    final list = _liveList ?? widget.list;
+    _actions.removeTask(list, taskId);
     setState(() => _completingTaskIds.remove(taskId));
   }
 
@@ -167,15 +225,25 @@ class _ListDetailScreenState extends State<ListDetailScreen>
           NotificationService.generateNotificationId(task.id));
     }
 
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final list = _liveList ?? widget.list;
     setState(() => _completingTaskIds.add(task.id));
-    settings.archiveListSnapshot(widget.list, task);
+    _actions.archiveSnapshot(list, task);
     // The active task is removed in _onAnimationEnd once the strike-through
     // finishes — keeps the row visible for the duration of the animation.
   }
 
   Future<void> _promptMoveTask(Task task) async {
     if (_isEditMode) return;
+    if (_isFirestore) {
+      // Move-between-containers across the local↔Firestore boundary needs
+      // explicit migration; not yet supported. Phase 4 can extend this once
+      // the migrator handles per-task moves.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Move from a shared list isn\'t supported yet'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
     final picked = await showMoveToSheet(
       context,
       excludeContainerId: widget.list.id,
@@ -190,13 +258,13 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   }
 
   void _reorderTasks(int oldIndex, int newIndex) {
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    settings.reorderListTasks(widget.list.id, oldIndex, newIndex);
+    final list = _liveList ?? widget.list;
+    _actions.reorderTasks(list, oldIndex, newIndex);
   }
 
   void _updateTask(Task updatedTask) {
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    settings.updateListTask(widget.list.id, updatedTask);
+    final list = _liveList ?? widget.list;
+    _actions.updateTask(list, updatedTask);
   }
 
   Future<void> _handleTaskReminder(
@@ -259,14 +327,14 @@ class _ListDetailScreenState extends State<ListDetailScreen>
 
   void _restoreTodo(ArchivedTask restoredTask) {
     Haptics.light();
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    settings.restoreListArchivedTask(widget.list.id, restoredTask);
+    final list = _liveList ?? widget.list;
+    _actions.restoreArchived(list, restoredTask);
   }
 
   void _clearArchive() {
     Haptics.medium();
-    final settings = Provider.of<SettingsNotifier>(context, listen: false);
-    settings.clearListArchive(widget.list.id);
+    final list = _liveList ?? widget.list;
+    _actions.clearArchive(list);
   }
 
   // --- EDIT MODE FUNCTIONS ---
