@@ -10,8 +10,12 @@ import '../models/repeat_interval.dart';
 import '../models/task.dart';
 import '../models/list.dart';
 import '../providers/settings_notifier.dart';
+import '../providers/auth_notifier.dart';
 import '../services/container_actions.dart';
+import '../services/drive_sync_service.dart';
+import '../services/auth_service.dart';
 import '../services/firestore_list_service.dart';
+import '../services/list_migrator.dart';
 import '../services/notification_service.dart';
 import '../utils/app_themes.dart';
 import '../utils/haptics.dart';
@@ -20,6 +24,7 @@ import '../widgets/icon_picker_sheet.dart';
 import '../widgets/move_to_sheet.dart';
 import '../widgets/preset_picker_sheet.dart';
 import '../widgets/reminder_sheet.dart';
+import '../widgets/share_sheet.dart';
 import '../widgets/task_list_editor.dart';
 import 'archive_screen.dart';
 import 'theme_editor_screen.dart';
@@ -671,6 +676,65 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     settings.updateListTheme(current.id, null);
   }
 
+  Future<void> _promptShare() async {
+    Haptics.selection();
+    final auth = Provider.of<AuthNotifier>(context, listen: false);
+    if (!auth.signedIn || auth.firebaseUid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Sign in with Google in Settings to share lists.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+
+    final settings = Provider.of<SettingsNotifier>(context, listen: false);
+    final current = _currentList(settings);
+
+    if (current.storage != ListStorage.firestore) {
+      // Drive-backed list — confirm migration to Firestore (the cloud move
+      // is what makes sharing possible). Owner becomes the current user.
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('Share this list?'),
+          content: Text(
+            '"${current.name}" will move from your private Drive backup to a shared cloud copy. Collaborators you invite can read and edit tasks live.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || ok != true) return;
+
+      final migrator = ListMigrator(
+        settings,
+        auth,
+        DriveSyncService(AuthService()),
+      );
+      final migrated = await migrator.migrateDriveToFirestore(current.id);
+      if (!mounted) return;
+      if (!migrated) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not move list to cloud. Check connection.'),
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    final fresh = _currentList(settings);
+    await showShareSheet(context, fresh);
+  }
+
   @override
   Widget build(BuildContext context) {
     final outerBrightness = Theme.of(context).brightness;
@@ -771,6 +835,9 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                 case 'reparent':
                   _promptReparent();
                   break;
+                case 'share':
+                  _promptShare();
+                  break;
                 case 'delete':
                   _promptDeleteList();
                   break;
@@ -833,6 +900,15 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                 child: ListTile(
                   leading: Icon(Icons.drive_file_move_outlined),
                   title: Text('Move list'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'share',
+                child: ListTile(
+                  leading: Icon(Icons.group_add_outlined),
+                  title: Text('Share'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),

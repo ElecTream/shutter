@@ -5,10 +5,14 @@ import 'package:provider/provider.dart';
 import '../utils/haptics.dart';
 
 import '../models/custom_theme.dart';
+import '../models/invite.dart';
 import '../models/list.dart';
 import '../models/repeat_interval.dart';
 import '../models/task.dart';
+import '../providers/auth_notifier.dart';
 import '../providers/settings_notifier.dart';
+import '../services/firestore_list_service.dart';
+import '../services/invite_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/icon_picker_sheet.dart';
 import '../widgets/move_to_sheet.dart';
@@ -44,11 +48,101 @@ class _TodoScreenState extends State<TodoScreen>
   final NotificationService _notificationService = NotificationService();
   StreamSubscription<Map<String, String>>? _completionSubscription;
 
+  // --- Pending invite reconciliation ---
+  bool _lastSignedIn = false;
+  bool _checkingInvites = false;
+  AuthNotifier? _authRef;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeNotifications();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = Provider.of<AuthNotifier>(context);
+    if (!identical(auth, _authRef)) {
+      _authRef?.removeListener(_onAuthChanged);
+      _authRef = auth;
+      auth.addListener(_onAuthChanged);
+      // Initial check — already-signed-in users get their pending invites on
+      // first build.
+      _lastSignedIn = false;
+      _onAuthChanged();
+    }
+  }
+
+  void _onAuthChanged() {
+    final auth = _authRef;
+    if (auth == null) return;
+    if (auth.signedIn && !_lastSignedIn) {
+      _lastSignedIn = true;
+      // Defer to next frame so we have a valid context for showDialog.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _checkPendingInvites();
+      });
+    } else if (!auth.signedIn) {
+      _lastSignedIn = false;
+    }
+  }
+
+  Future<void> _checkPendingInvites() async {
+    if (_checkingInvites) return;
+    final auth = _authRef;
+    if (auth == null) return;
+    final email = auth.email;
+    final uid = auth.firebaseUid;
+    if (email == null || uid == null) return;
+    _checkingInvites = true;
+    try {
+      final invites = await InviteService().pendingInvitesFor(email);
+      for (final invite in invites) {
+        if (!mounted) return;
+        await _promptInviteAcceptance(invite, uid);
+      }
+    } finally {
+      _checkingInvites = false;
+    }
+  }
+
+  Future<void> _promptInviteAcceptance(Invite invite, String uid) async {
+    // Fetch list metadata for a friendlier prompt; tolerate fetch failure.
+    final list = await FirestoreListService().getList(invite.listId);
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Shared list invite'),
+        content: Text(
+          list != null
+              ? 'You\'ve been invited to "${list.name}". Accept?'
+              : 'You\'ve been invited to a shared list. Accept?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Decline'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (accepted != true) return;
+    final ok = await InviteService().acceptInvite(invite.token, uid);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Joined the shared list' : 'Could not accept invite'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -99,6 +193,7 @@ class _TodoScreenState extends State<TodoScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _authRef?.removeListener(_onAuthChanged);
     _taskTextController.dispose();
     _taskFocusNode.dispose();
     _editTextController.dispose();

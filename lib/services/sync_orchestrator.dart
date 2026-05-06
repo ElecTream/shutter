@@ -9,6 +9,7 @@ import '../providers/auth_notifier.dart';
 import '../providers/settings_notifier.dart';
 import 'auth_service.dart';
 import 'drive_sync_service.dart';
+import 'firestore_list_service.dart';
 
 /// Coordinates Drive sync for personal lists.
 ///
@@ -28,13 +29,17 @@ class SyncOrchestrator {
   final DriveSyncService _drive;
 
   StreamSubscription<String>? _dirtySub;
+  StreamSubscription<List<TaskList>>? _firestoreListsSub;
+  String? _firestoreListsUid;
+  final FirestoreListService _firestore;
   final Set<String> _pendingDirty = <String>{};
   Timer? _debounceTimer;
   bool _running = false;
   bool _initialReconcileDone = false;
 
   SyncOrchestrator(this._settings, this._auth)
-      : _drive = DriveSyncService(AuthService()) {
+      : _drive = DriveSyncService(AuthService()),
+        _firestore = FirestoreListService() {
     _auth.addListener(_onAuthChanged);
     _onAuthChanged();
   }
@@ -68,6 +73,7 @@ class SyncOrchestrator {
 
   void dispose() {
     _detachDirty();
+    _detachFirestoreLists();
     _auth.removeListener(_onAuthChanged);
   }
 
@@ -76,15 +82,45 @@ class SyncOrchestrator {
   void _onAuthChanged() {
     if (_auth.signedIn) {
       _attachDirty();
+      _attachFirestoreLists();
       // Don't await — the orchestrator lives outside the widget tree and the
       // initial reconcile shouldn't block sign-in.
       unawaited(_scheduleInitialSync());
     } else {
       _detachDirty();
+      _detachFirestoreLists();
       _drive.resetCache();
       _pendingDirty.clear();
       _initialReconcileDone = false;
     }
+  }
+
+  /// Subscribes to the lists the current user owns or collaborates on. Each
+  /// snapshot replaces the firestore-backed slice of the local manifest so
+  /// shared lists appear/disappear on the home screen as memberships change.
+  /// FirebaseAuth credential exchange is async; the auth listener fires
+  /// repeatedly while sign-in completes — re-attaching with the same uid
+  /// is a no-op.
+  void _attachFirestoreLists() {
+    final uid = _auth.firebaseUid;
+    if (uid == null) return;
+    if (_firestoreListsSub != null && _firestoreListsUid == uid) return;
+    _detachFirestoreLists();
+    _firestoreListsUid = uid;
+    _firestoreListsSub = _firestore.streamMyLists(uid).listen((lists) {
+      _settings.beginRemoteApply();
+      try {
+        _settings.applyRemoteFirestoreLists(lists);
+      } finally {
+        _settings.endRemoteApply();
+      }
+    });
+  }
+
+  void _detachFirestoreLists() {
+    _firestoreListsSub?.cancel();
+    _firestoreListsSub = null;
+    _firestoreListsUid = null;
   }
 
   void _attachDirty() {

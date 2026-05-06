@@ -1218,6 +1218,51 @@ class SettingsNotifier extends ChangeNotifier {
     await _saveListArchive(containerId);
   }
 
+  /// Replaces every Firestore-backed list in the local manifest with [remote].
+  /// Drive- and local-storage lists are preserved untouched. Used by the
+  /// orchestrator's Firestore stream subscription so shared lists surface on
+  /// the home screen as soon as the current user is added as a collaborator.
+  Future<void> applyRemoteFirestoreLists(List<TaskList> remote) async {
+    final remoteById = {for (final l in remote) l.id: l};
+    bool changed = false;
+
+    // Drop firestore-backed lists no longer in the remote set (kicked or
+    // unshared by the owner).
+    final toRemove = <String>[];
+    for (final l in _taskLists) {
+      if (l.storage == ListStorage.firestore && !remoteById.containsKey(l.id)) {
+        toRemove.add(l.id);
+      }
+    }
+    if (toRemove.isNotEmpty) {
+      _taskLists.removeWhere((l) => toRemove.contains(l.id));
+      for (final id in toRemove) {
+        _listTasks.remove(id);
+        _listArchive.remove(id);
+        _listsLoaded.remove(id);
+      }
+      changed = true;
+    }
+
+    // Upsert lists from the remote set.
+    for (final r in remote) {
+      final idx = _taskLists.indexWhere((l) => l.id == r.id);
+      if (idx == -1) {
+        _taskLists.add(r);
+        changed = true;
+      } else {
+        final local = _taskLists[idx];
+        if (local.storage != ListStorage.firestore ||
+            r.updatedAt > local.updatedAt) {
+          _taskLists[idx] = r;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) await _saveTaskLists();
+  }
+
   /// Maximum `updatedAt` across the active tasks for a container. Used by
   /// the orchestrator to decide whether a remote container body should
   /// replace the local one.
