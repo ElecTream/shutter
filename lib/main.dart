@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,8 +43,36 @@ void main() async {
   );
 }
 
-class ShutterApp extends StatelessWidget {
+class ShutterApp extends StatefulWidget {
   const ShutterApp({super.key});
+
+  @override
+  State<ShutterApp> createState() => _ShutterAppState();
+}
+
+class _ShutterAppState extends State<ShutterApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Resume → kick a sync so a second device's edits made while we were
+    // backgrounded get pulled in. The orchestrator self-debounces and
+    // no-ops when signed out, so it's safe to fire blindly.
+    if (state == AppLifecycleState.resumed) {
+      final orchestrator = context.read<SyncOrchestrator>();
+      unawaited(orchestrator.syncNow());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

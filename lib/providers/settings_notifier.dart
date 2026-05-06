@@ -54,7 +54,16 @@ class SettingsNotifier extends ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get dirtyContainers => _dirtyController.stream;
 
+  // When the orchestrator is applying remote state, the saves it triggers
+  // would otherwise re-emit dirty events and ping-pong remote → local → push
+  // forever. Wrap remote applies in begin/end to suppress emits for the
+  // duration. Mutations from the user's hand are unaffected.
+  bool _suppressDirty = false;
+  void beginRemoteApply() => _suppressDirty = true;
+  void endRemoteApply() => _suppressDirty = false;
+
   void _markDirty(String key) {
+    if (_suppressDirty) return;
     if (!_dirtyController.isClosed) _dirtyController.add(key);
   }
 
@@ -1097,6 +1106,97 @@ class SettingsNotifier extends ChangeNotifier {
   Future<void> _saveColors() async {
     final colorHexes = _savedColors.map((c) => c.toARGB32().toString()).toList();
     await _prefs.setStringList('savedColors', colorHexes);
+  }
+
+  // --- Remote-apply (sync pull side) ---------------------------------------
+
+  /// Replaces local task-list metadata with [remoteLists], using a per-list
+  /// LWW comparison: a remote list whose `updatedAt` exceeds the local copy's
+  /// wins; otherwise the local copy survives. Local-only lists (those absent
+  /// from the remote manifest) are dropped — the remote set is authoritative
+  /// because we always push pending dirty before pulling, so any list local
+  /// just created is already in remote by this point.
+  ///
+  /// Caller must wrap in [beginRemoteApply] / [endRemoteApply] so the saves
+  /// triggered here don't re-emit dirty events and trigger another push.
+  Future<void> applyRemoteManifest(List<TaskList> remoteLists) async {
+    final localById = {for (final l in _taskLists) l.id: l};
+    final remoteById = {for (final l in remoteLists) l.id: l};
+
+    final merged = <TaskList>[];
+    for (final remote in remoteLists) {
+      final local = localById[remote.id];
+      if (local == null || remote.updatedAt > local.updatedAt) {
+        merged.add(remote);
+      } else {
+        merged.add(local);
+      }
+    }
+
+    final droppedIds = <String>[
+      for (final id in localById.keys)
+        if (!remoteById.containsKey(id)) id,
+    ];
+
+    _taskLists
+      ..clear()
+      ..addAll(merged);
+    await _saveTaskLists();
+
+    for (final id in droppedIds) {
+      await _prefs.remove('todos_$id');
+      _listTasks.remove(id);
+      _listsLoaded.remove(id);
+      // Archive intentionally retained — it can still surface in the global
+      // archive view as "deleted list" provenance.
+    }
+  }
+
+  /// Replaces a list's tasks + archive with the remote copy. Caller is
+  /// responsible for the LWW decision (file-level updatedAt comparison) — this
+  /// just performs the swap unconditionally.
+  Future<void> applyRemoteContainer(
+    String containerId, {
+    required List<Task> tasks,
+    required List<ArchivedTask> archive,
+  }) async {
+    if (containerId == 'root') {
+      _rootTasks
+        ..clear()
+        ..addAll(tasks);
+      _rootArchive
+        ..clear()
+        ..addAll(archive);
+      _pruneArchive(_rootArchive);
+      await _saveRootTasks();
+      await _saveRootArchive();
+      return;
+    }
+    final cachedTasks = _listTasks.putIfAbsent(containerId, () => []);
+    cachedTasks
+      ..clear()
+      ..addAll(tasks);
+    final cachedArchive = _listArchive.putIfAbsent(containerId, () => []);
+    cachedArchive
+      ..clear()
+      ..addAll(archive);
+    _pruneArchive(cachedArchive);
+    _listsLoaded.add(containerId);
+    await _saveListTasks(containerId);
+    await _saveListArchive(containerId);
+  }
+
+  /// Maximum `updatedAt` across the active tasks for a container. Used by
+  /// the orchestrator to decide whether a remote container body should
+  /// replace the local one.
+  int localContainerUpdatedAt(String containerId) {
+    final tasks = containerId == 'root' ? _rootTasks : _listTasks[containerId];
+    if (tasks == null || tasks.isEmpty) return 0;
+    var max = 0;
+    for (final t in tasks) {
+      if (t.updatedAt > max) max = t.updatedAt;
+    }
+    return max;
   }
 
   // --- Data export / import / wipe -----------------------------------------

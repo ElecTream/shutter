@@ -2,24 +2,26 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/archived_task.dart';
+import '../models/list.dart';
+import '../models/task.dart';
 import '../providers/auth_notifier.dart';
 import '../providers/settings_notifier.dart';
 import 'auth_service.dart';
 import 'drive_sync_service.dart';
 
-/// Coordinates Drive backups for personal lists.
+/// Coordinates Drive sync for personal lists.
 ///
-/// Phase 2 contract — push-only backup:
-/// - On sign-in, ensures the Drive folder exists and runs an initial bulk
-///   push so the user's local state is mirrored remotely.
+/// - On sign-in, ensures the Drive folder exists then runs a full reconcile
+///   (push pending dirty, then pull manifest + every container).
 /// - On every mutation, debounces by 2s and pushes only the touched
 ///   containers (`root`, list UUIDs, or the manifest).
+/// - "Sync now" and app resume call [syncNow], which pushes any pending
+///   dirty work then pulls remote state. Per-list LWW on the manifest;
+///   container-level LWW (file `updatedAt` vs local max record `updatedAt`)
+///   on tasks/archive.
 /// - On sign-out, drops the cached folder id and stops syncing; local data
 ///   is untouched.
-///
-/// Phase 2.1 will add the pull-side merge (per-list updatedAt LWW). For now
-/// the orchestrator is a one-way mirror — adequate for backup but not for
-/// multi-device sync.
 class SyncOrchestrator {
   final SettingsNotifier _settings;
   final AuthNotifier _auth;
@@ -39,11 +41,19 @@ class SyncOrchestrator {
 
   // --- Public API ----------------------------------------------------------
 
-  /// Forces a full push regardless of dirty tracking. Wired to the
-  /// "Sync now" button in Settings; also used as the bulk-upload path on
-  /// first sign-in.
+  /// Push then pull — full reconcile. Wired to the "Sync now" button in
+  /// Settings, the initial sign-in path, and app-resume.
+  ///
+  /// Push first so any local edits queued for sync are uploaded before we
+  /// adopt remote state. Then pull manifest + every container, applying
+  /// per-list LWW on metadata and per-container LWW on tasks/archive.
   Future<void> syncNow() async {
     if (!_auth.signedIn) return;
+    if (_running) return;
+
+    // Stage 1: push every container the orchestrator knows about. This is a
+    // superset of the dirty set so concurrent edits during the run don't get
+    // skipped — we'd rather push redundantly than miss a change.
     _pendingDirty
       ..add(kManifestDirtyKey)
       ..add('root');
@@ -51,6 +61,9 @@ class SyncOrchestrator {
       _pendingDirty.add(l.id);
     }
     await _flush();
+
+    // Stage 2: pull and merge.
+    await _pullAndMerge();
   }
 
   void dispose() {
@@ -94,23 +107,23 @@ class SyncOrchestrator {
     _initialReconcileDone = true;
     final folderId = await _drive.bootstrapFolder();
     if (folderId == null) return;
-    final manifest = await _drive.pullManifest();
-    if (manifest == null) {
-      // Fresh Drive — bulk push every container.
-      await syncNow();
-    } else {
-      // Phase 2.1 will do a per-list LWW merge here. For now the local copy
-      // is authoritative on the active device; just push current state so
-      // remote stays at-or-newer-than the most recent local edit.
-      await syncNow();
-    }
+    // syncNow handles both branches: pulls a fresh manifest (no-op if the
+    // remote is empty) and pushes whatever local has on top.
+    await syncNow();
   }
 
   // --- Push pipeline -------------------------------------------------------
 
   Future<void> _flush() async {
-    if (_running || !_auth.signedIn) return;
+    if (!_auth.signedIn) return;
     if (_pendingDirty.isEmpty) return;
+    if (_running) {
+      // A pull or earlier flush is in flight — reschedule so the dirty work
+      // isn't lost. The next tick will see _running cleared and proceed.
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(const Duration(seconds: 2), _flush);
+      return;
+    }
     _running = true;
     try {
       final dirty = _pendingDirty.toSet();
@@ -143,6 +156,72 @@ class SyncOrchestrator {
       'lists': lists,
     };
     await _drive.pushManifest(manifest);
+  }
+
+  // --- Pull pipeline -------------------------------------------------------
+
+  /// Pulls the remote manifest + every remote container and applies them
+  /// to local state under [SettingsNotifier.beginRemoteApply] so the writes
+  /// don't echo back as dirty events.
+  ///
+  /// Per-list LWW on the manifest; container body replaces local only when
+  /// the file's `updatedAt` exceeds the local max record `updatedAt`.
+  Future<void> _pullAndMerge() async {
+    if (_running) return;
+    _running = true;
+    _settings.beginRemoteApply();
+    try {
+      final manifest = await _drive.pullManifest();
+      if (manifest == null) return;
+
+      // Manifest merge.
+      final remoteListsRaw = (manifest['lists'] as List?) ?? const [];
+      final remoteLists = <TaskList>[];
+      for (final m in remoteListsRaw) {
+        if (m is! Map) continue;
+        try {
+          remoteLists.add(TaskList.fromJson(Map<String, dynamic>.from(m)));
+        } catch (e) {
+          debugPrint('SyncOrchestrator manifest entry decode failed: $e');
+        }
+      }
+      await _settings.applyRemoteManifest(remoteLists);
+
+      // Container merge — root + every list now in the manifest.
+      final ids = <String>['root', ...remoteLists.map((l) => l.id)];
+      for (final id in ids) {
+        await _pullContainer(id);
+      }
+    } catch (e) {
+      debugPrint('SyncOrchestrator._pullAndMerge failed: $e');
+    } finally {
+      _settings.endRemoteApply();
+      _running = false;
+    }
+  }
+
+  Future<void> _pullContainer(String id) async {
+    final body = await _drive.pullContainer(id);
+    if (body == null) return;
+    final remoteUpdatedAt = (body['updatedAt'] as int?) ?? 0;
+    final localUpdatedAt = _settings.localContainerUpdatedAt(id);
+    if (remoteUpdatedAt <= localUpdatedAt) return;
+
+    final tasks = <Task>[];
+    for (final raw in (body['tasks'] as List?) ?? const []) {
+      if (raw is! Map) continue;
+      try {
+        tasks.add(Task.fromJson(Map<String, dynamic>.from(raw)));
+      } catch (_) {}
+    }
+    final archive = <ArchivedTask>[];
+    for (final raw in (body['archive'] as List?) ?? const []) {
+      if (raw is! Map) continue;
+      try {
+        archive.add(ArchivedTask.fromJson(Map<String, dynamic>.from(raw)));
+      } catch (_) {}
+    }
+    await _settings.applyRemoteContainer(id, tasks: tasks, archive: archive);
   }
 
   Future<void> _pushContainer(String id) async {
