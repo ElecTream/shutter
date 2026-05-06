@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "640349210361",
+    "project_id": "shutter-elec",
+    "storage_bucket": "shutter-elec.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:640349210361:android:5ab6f9e5ef687089ed0428",
+        "android_client_info": {
+          "package_name": "com.electream.shutter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLvMIcewTUHCHqRsCyRCLOJenI56ATyW4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
