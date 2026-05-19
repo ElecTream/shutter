@@ -46,6 +46,10 @@ class ListDetailScreen extends StatefulWidget {
 class _ListDetailScreenState extends State<ListDetailScreen>
     with WidgetsBindingObserver {
   final TextEditingController _textController = TextEditingController();
+  // FocusNode dedicated to the bottom new-task TaskInputField. Kept separate
+  // from `_editFocusNode` (below) so the framework never has to swap a single
+  // node between two different TextFields — that swap is what orphaned the
+  // platform TextInputConnection on app resume.
   final FocusNode _focusNode = FocusNode();
   // Local UI-only state. Persistent task data lives in SettingsNotifier.
   final Set<String> _completingTaskIds = <String>{};
@@ -54,6 +58,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
   bool _isEditMode = false;
   Task? _taskBeingEdited;
   final TextEditingController _editTextController = TextEditingController();
+  final FocusNode _editFocusNode = FocusNode();
 
   final NotificationService _notificationService = NotificationService();
   final FirestoreListService _firestore = FirestoreListService();
@@ -179,6 +184,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     _textController.dispose();
     _focusNode.dispose();
     _editTextController.dispose();
+    _editFocusNode.dispose();
     _completionSubscription?.cancel();
     _firestoreTasksSub?.cancel();
     _firestoreArchiveSub?.cancel();
@@ -356,7 +362,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       _isEditMode = false;
       _taskBeingEdited = null;
     });
-    _focusNode.unfocus();
+    _editFocusNode.unfocus();
   }
 
   void _startEditingTask(Task task) {
@@ -365,10 +371,11 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       _taskBeingEdited = task;
       _editTextController.text = task.text;
     });
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) {
-        FocusScope.of(context).requestFocus(_focusNode);
-      }
+    // Wait until the rebuild mounts the edit TextField, then request focus.
+    // A wall-clock delay would race against rebuilds from the Firestore /
+    // taskCompletedStream listeners.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _editFocusNode.requestFocus();
     });
   }
 
@@ -387,7 +394,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     setState(() {
       _taskBeingEdited = null;
     });
-    _focusNode.unfocus();
+    _editFocusNode.unfocus();
   }
 
   void _cancelTaskEdit() {
@@ -395,7 +402,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
     setState(() {
       _taskBeingEdited = null;
     });
-    _focusNode.unfocus();
+    _editFocusNode.unfocus();
   }
 
   void _navigateToArchive() async {
@@ -929,9 +936,8 @@ class _ListDetailScreenState extends State<ListDetailScreen>
       ),
       body: GestureDetector(
         onTap: () {
-          if (_focusNode.hasFocus) {
-            _focusNode.unfocus();
-          }
+          // Releases whichever of the input / edit nodes is currently focused.
+          FocusManager.instance.primaryFocus?.unfocus();
         },
         behavior: HitTestBehavior.translucent,
         child: Container(
@@ -974,7 +980,7 @@ class _ListDetailScreenState extends State<ListDetailScreen>
                           isEditMode: _isEditMode,
                           taskBeingEdited: _taskBeingEdited,
                           editTextController: _editTextController,
-                          focusNode: _focusNode,
+                          focusNode: _editFocusNode,
                           onCompleteTask: _completeTask,
                           onSetReminder: _showDateTimePicker,
                           onClearReminder: _clearReminder,

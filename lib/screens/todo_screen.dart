@@ -33,8 +33,13 @@ class _TodoScreenState extends State<TodoScreen>
     with WidgetsBindingObserver {
   // --- Root task editor state ---
   final TextEditingController _taskTextController = TextEditingController();
+  // FocusNode for the bottom new-task TaskInputField. Kept separate from
+  // `_editFocusNode` (below) so the framework never has to swap a single
+  // node between two TextFields — that swap is what orphaned the platform
+  // TextInputConnection on app resume.
   final FocusNode _taskFocusNode = FocusNode();
   final TextEditingController _editTextController = TextEditingController();
+  final FocusNode _editFocusNode = FocusNode();
   final Set<String> _completingTaskIds = <String>{};
   bool _isEditMode = false;
   Task? _taskBeingEdited;
@@ -197,6 +202,7 @@ class _TodoScreenState extends State<TodoScreen>
     _taskTextController.dispose();
     _taskFocusNode.dispose();
     _editTextController.dispose();
+    _editFocusNode.dispose();
     _listEditController.dispose();
     _listFocusNode.dispose();
     _completionSubscription?.cancel();
@@ -341,7 +347,7 @@ class _TodoScreenState extends State<TodoScreen>
       _taskBeingEdited = null;
       _listBeingEditedId = null;
     });
-    _taskFocusNode.unfocus();
+    _editFocusNode.unfocus();
     _listFocusNode.unfocus();
   }
 
@@ -353,8 +359,10 @@ class _TodoScreenState extends State<TodoScreen>
       _listBeingEditedId = list.id;
       _listEditController.text = list.name;
     });
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) FocusScope.of(context).requestFocus(_listFocusNode);
+    // Wait until the rebuild mounts the rename TextField before requesting
+    // focus. A wall-clock delay would race against notifier rebuilds.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _listFocusNode.requestFocus();
     });
   }
 
@@ -381,8 +389,10 @@ class _TodoScreenState extends State<TodoScreen>
       _taskBeingEdited = task;
       _editTextController.text = task.text;
     });
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) FocusScope.of(context).requestFocus(_taskFocusNode);
+    // Wait for the rebuild to mount the inline edit TextField, then focus.
+    // Avoids racing against rebuilds from the completion stream listener.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _editFocusNode.requestFocus();
     });
   }
 
@@ -407,13 +417,13 @@ class _TodoScreenState extends State<TodoScreen>
       }
     }
     setState(() => _taskBeingEdited = null);
-    _taskFocusNode.unfocus();
+    _editFocusNode.unfocus();
   }
 
   void _cancelTaskEdit() {
     Haptics.selection();
     setState(() => _taskBeingEdited = null);
-    _taskFocusNode.unfocus();
+    _editFocusNode.unfocus();
   }
 
   // --- List actions --------------------------------------------------------
@@ -525,7 +535,8 @@ class _TodoScreenState extends State<TodoScreen>
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
-          if (_taskFocusNode.hasFocus) _taskFocusNode.unfocus();
+          // Releases whichever of input / edit / list-rename nodes holds focus.
+          FocusManager.instance.primaryFocus?.unfocus();
         },
         child: Container(
           decoration: backgroundImage != null &&
@@ -604,7 +615,7 @@ class _TodoScreenState extends State<TodoScreen>
           isEditMode: _isEditMode,
           taskBeingEdited: _taskBeingEdited,
           editTextController: _editTextController,
-          focusNode: _taskFocusNode,
+          focusNode: _editFocusNode,
           onCompleteTask: _tapRootTask,
           onSetReminder: _showRootDateTimePicker,
           onClearReminder: _clearRootReminder,

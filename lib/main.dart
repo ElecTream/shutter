@@ -78,6 +78,15 @@ class _ShutterAppState extends State<ShutterApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Release the IME connection cleanly before Android severs its binding
+    // on onPause. Without this, a focused TextField can resume with a stale
+    // TextInputConnection — keyboard won't open, cursor/selection break.
+    // Gate on `paused` only: `inactive` covers transient interruptions
+    // (notification shade, control center) that should NOT dismiss the
+    // keyboard.
+    if (state == AppLifecycleState.paused) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     // Resume → kick a sync so a second device's edits made while we were
     // backgrounded get pulled in. The orchestrator self-debounces and
     // no-ops when signed out, so it's safe to fire blindly.
