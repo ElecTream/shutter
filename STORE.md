@@ -28,7 +28,7 @@ Android first. No ads. Published by ElecTream.
 
 ## Before upload
 
-- [ ] Release signing (not debug keys) + `version: 2.2.13+N` in pubspec
+- [ ] Release signing: copy `android/key.properties.example` → `android/key.properties`, drop in the upload keystore (gitignored; release does not use debug keys) + `version: 2.2.13+N` in pubspec
 - [ ] `flutter build appbundle --release`
 - [ ] Play App Signing SHAs in Firebase / OAuth for `com.electream.shutter`
 - [ ] Public HTTPS URL for [PRIVACY.md](PRIVACY.md)

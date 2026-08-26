@@ -1,0 +1,12 @@
+# Copy this file to android/key.properties and fill in real values.
+# Do not commit key.properties or the keystore — both are gitignored.
+#
+#   cp android/key.properties.example android/key.properties
+#
+# storeFile is relative to the android/ directory unless it is an absolute path.
+
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+# storeFile=upload-keystore.jks
+storeFile=upload-keystore.jks

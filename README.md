@@ -25,7 +25,7 @@ flutter pub get
 flutter run
 ```
 
-Android release (today still debug-signed — do not upload that AAB):
+Android release (needs `android/key.properties` and the upload keystore; copy `android/key.properties.example` and do not commit either file):
 
 ```sh
 flutter build appbundle --release
